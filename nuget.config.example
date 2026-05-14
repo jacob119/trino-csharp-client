@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  nuget.config.example — Copy to nuget.config and fill in your Nexus details.
+
+  Nexus URL patterns:
+    Pull (group)  : http://nexus.company.com:8081/repository/nuget-group/
+    Push (hosted) : http://nexus.company.com:8081/repository/nuget-hosted/
+
+  Credentials can be set here (CI) or via:
+    dotnet nuget add source ... --username ... --password ...
+-->
+<configuration>
+  <packageSources>
+    <!-- Disable nuget.org if you want Nexus-only resolution -->
+    <!-- <add key="nuget.org" value="https://api.nuget.org/v3/index.json" protocolVersion="3" /> -->
+
+    <!-- Nexus group repo (proxies nuget.org + internal hosted packages) -->
+    <add key="nexus-trino" value="http://nexus.company.com:8081/repository/nuget-group/" />
+  </packageSources>
+
+  <packageSourceCredentials>
+    <nexus-trino>
+      <add key="Username" value="%NEXUS_USERNAME%" />
+      <add key="ClearTextPassword" value="%NEXUS_PASSWORD%" />
+    </nexus-trino>
+  </packageSourceCredentials>
+</configuration>
