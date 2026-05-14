@@ -334,8 +334,8 @@ namespace Trino.Integration.Test
                 throw new Exception($"tstz +09:00 offset mismatch: {tstzOffsetVal.Offset}");
 
             var iym = r.GetValue(5);
-            AssertType(iym, typeof(DateTime), "interval year to month");
-            var iymVal = (DateTime)iym;
+            AssertType(iym, typeof(TrinoIntervalYearToMonth), "interval year to month");
+            var iymVal = (TrinoIntervalYearToMonth)iym;
             if (iymVal.Year != 3 || iymVal.Month != 5)
                 throw new Exception($"interval_ym mismatch: year={iymVal.Year} month={iymVal.Month}");
 
