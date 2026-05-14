@@ -204,7 +204,7 @@ namespace Trino.Data.ADO.Server
         /// <param name="restrictionValues">Optional filtering restrictions.</param>
         public override DataTable GetSchema(string collectionName, string[] restrictionValues)
         {
-            switch (collectionName.ToLower())
+            switch (collectionName.ToLowerInvariant())
             {
                 case "catalogs":
                     using (var cmd = new TrinoCommand(this, "SHOW CATALOGS"))
