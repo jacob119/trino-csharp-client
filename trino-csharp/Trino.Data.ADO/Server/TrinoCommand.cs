@@ -290,6 +290,15 @@ namespace Trino.Data.ADO.Server
             CancellationToken.Cancel();
         }
 
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                CancellationToken.Dispose();
+            }
+            base.Dispose(disposing);
+        }
+
         /// <summary>
         /// Creates and returns a new parameter object.
         /// </summary>

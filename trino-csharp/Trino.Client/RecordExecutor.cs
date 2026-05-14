@@ -76,12 +76,19 @@ namespace Trino.Client
 
             StatementClientV1 statementClient = new StatementClientV1(session, cancellationToken, logger);
             logger?.LogInformation("Trino: Created client, starting query: {0}", statement);
-            
-            await statementClient.GetInitialResponse(
-                statement, 
-                queryParameters, 
-                cancellationToken)
-                .ConfigureAwait(false);
+            try
+            {
+                await statementClient.GetInitialResponse(
+                    statement,
+                    queryParameters,
+                    cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch
+            {
+                statementClient.Dispose();
+                throw;
+            }
 
             PageQueue pageQueue = new PageQueue(
                 logger,

@@ -37,7 +37,8 @@ namespace Trino.Client.Auth
                 throw new InvalidOperationException("OAuth2 configuration is missing required properties.");
             }
 
-            var tokenResponse = GetTokenAsync(TokenEndpoint, ClientId, ClientSecret, Scope).Result;
+            var tokenResponse = GetTokenAsync(TokenEndpoint, ClientId, ClientSecret, Scope)
+                .ConfigureAwait(false).GetAwaiter().GetResult();
             _accessToken = tokenResponse.AccessToken;
             _tokenExpiry = DateTime.UtcNow.AddSeconds(tokenResponse.ExpiresIn);
         }

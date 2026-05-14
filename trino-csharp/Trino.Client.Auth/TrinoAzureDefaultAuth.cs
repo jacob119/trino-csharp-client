@@ -7,12 +7,13 @@ using Azure.Identity;
 
 namespace Trino.Client.Auth
 {
-    public class TrinoAzureDefaultAuth : ITrinoAuth
+    public class TrinoAzureDefaultAuth : ITrinoAuth, IDisposable
     {
         private readonly DefaultAzureCredential _credential;
         private readonly string _scope;
         private readonly SemaphoreSlim _refreshLock = new SemaphoreSlim(1, 1);
         private AccessToken _accessToken;
+        private bool _disposed;
 
         public TrinoAzureDefaultAuth(string scope)
         {
@@ -58,6 +59,15 @@ namespace Trino.Client.Auth
             return await _credential.GetTokenAsync(
                 new TokenRequestContext(new[] { _scope }),
                 CancellationToken.None).ConfigureAwait(false);
+        }
+
+        public void Dispose()
+        {
+            if (!_disposed)
+            {
+                _disposed = true;
+                _refreshLock.Dispose();
+            }
         }
     }
 }
