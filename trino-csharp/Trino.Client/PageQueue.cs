@@ -159,11 +159,11 @@ namespace Trino.Client
         /// </summary>
         private bool ShouldStopReading()
         {
-            if (this.cancellationToken != null && this.cancellationToken.IsCancellationRequested)
+            if (this.cancellationToken.IsCancellationRequested)
             {
                 logger?.LogDebug("Trino Query Executor: query cancelled.");
                 errors.Add(new OperationCanceledException("Query cancelled"));
-                return false;
+                return true;
             }
 
             if (client.IsTimeout)

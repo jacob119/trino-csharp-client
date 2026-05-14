@@ -55,6 +55,12 @@ namespace Trino.Client
         /// </summary>
         private const string clientCapabilities = "PARAMETRIC_DATETIME";
 
+        /// <summary>
+        /// Explicitly request JSON-encoded result data. Prevents Trino from selecting a binary encoding
+        /// that this client cannot decode.
+        /// </summary>
+        private const string queryDataEncoding = "json";
+
         // Timeout properties
         private readonly Stopwatch stopwatch = new Stopwatch();
 
@@ -146,12 +152,13 @@ namespace Trino.Client
                 return sslPolicyErrors == SslPolicyErrors.None;
             };
 
-            HttpClient httpClient = new HttpClient(handler);
+            // Fix: assign to this.httpClient so the configured handler is actually used.
+            this.httpClient = new HttpClient(handler);
             this.httpClient.Timeout = Constants.HttpConnectionTimeout;
 
             if (!this.Session.Properties.CompressionDisabled)
             {
-                httpClient.DefaultRequestHeaders.AcceptEncoding.Add(new StringWithQualityHeaderValue("gzip"));
+                this.httpClient.DefaultRequestHeaders.AcceptEncoding.Add(new StringWithQualityHeaderValue("gzip"));
             }
         }
 
@@ -185,33 +192,27 @@ namespace Trino.Client
             string responseContent = null;
             try
             {
-                using (HttpRequestMessage queryRequest = this.BuildInitialQueryRequest(statement, parameters))
-                {
-                    logger?.LogDebug("Trino: sending request at {1} msec: {0}", queryRequest.RequestUri.ToString(), stopwatch.ElapsedMilliseconds);
-                    responseContent = await GetResourceAsync(
-                        httpClient,
-                        this.RetryableResponses,
-                        this.Session,
-                        queryRequest,
-                        OK,
-                        cancellationToken).ConfigureAwait(false);
+                logger?.LogDebug("Trino: sending request at {1} msec: {0}", $"{Session.Properties.Server}v1/statement", stopwatch.ElapsedMilliseconds);
+                responseContent = await GetResourceAsync(
+                    httpClient,
+                    this.RetryableResponses,
+                    this.Session,
+                    () => this.BuildInitialQueryRequest(statement, parameters),
+                    OK,
+                    cancellationToken).ConfigureAwait(false);
 
-                    logger?.LogDebug("Trino: got response content: {0}", responseContent);
-                    this.Statement = JsonConvert.DeserializeObject<Statement>(responseContent);
-                    logger?.LogInformation("Query created queryId at {1} msec: {0}", Statement?.id, stopwatch.ElapsedMilliseconds);
-                    return this.Statement.stats;
-                }
+                logger?.LogDebug("Trino: got response content: {0}", responseContent);
+                this.Statement = JsonConvert.DeserializeObject<Statement>(responseContent);
+                logger?.LogInformation("Query created queryId at {1} msec: {0}", Statement?.id, stopwatch.ElapsedMilliseconds);
+                return this.Statement.stats;
             }
-            catch (Exception e)
+            catch (Exception e) when (!(e is TrinoException))
             {
                 if (responseContent != null)
                 {
                     throw new TrinoException("Error starting query. Got response: " + responseContent, e);
                 }
-                else
-                {
-                    throw e;
-                }
+                throw;
             }
         }
 
@@ -259,18 +260,24 @@ namespace Trino.Client
             if (State.StateTransition(TrinoQueryStates.CLIENT_ABORTED, TrinoQueryStates.RUNNING))
             {
                 logger?.LogInformation("Trino: Sending cancellation request queryId:{0}", Statement?.id);
-                using (HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Delete, this.Statement.nextUri))
+                // Capture URI before the async call; do not use the cancellation token as the query is already cancelled.
+                string cancelUri = this.Statement.nextUri;
+                try
                 {
-                    // do not use cancellation token here as the query is already cancelled
-                    string cancellationResponse = await GetResourceAsync(
+                    await GetResourceAsync(
                         httpClient,
                         this.RetryableResponses,
                         this.Session,
-                        request,
+                        () => new HttpRequestMessage(HttpMethod.Delete, cancelUri),
                         OKorNoContent,
                         CancellationToken.None).ConfigureAwait(false);
                 }
-                logger?.LogInformation("Trino: Cancelled", Statement?.id);
+                catch (Exception ex)
+                {
+                    // Cancellation is best-effort; if the server is unreachable, log and continue.
+                    logger?.LogWarning("Trino: Cancellation request failed queryId:{0}: {1}", Statement?.id, ex.Message);
+                }
+                logger?.LogInformation("Trino: Cancelled queryId:{0}", Statement?.id);
             }
             else
             {
@@ -300,6 +307,10 @@ namespace Trino.Client
             string responseStr = await this.GetAsync(new Uri(this.Statement.nextUri), OK).ConfigureAwait(false);
             logger?.LogDebug("Trino: response: {1}", responseStr);
             QueryResultPage response = JsonConvert.DeserializeObject<QueryResultPage>(responseStr);
+            if (response == null)
+            {
+                throw new TrinoException($"Server returned an empty or null response for nextUri: {this.Statement.nextUri}");
+            }
             logger?.LogDebug("Trino: response at {0} msec with state {1}", stopwatch.ElapsedMilliseconds, response.stats.state);
 
             // Note, the size is estimated based on the response string size which is not the actual deserialized size.
@@ -326,7 +337,7 @@ namespace Trino.Client
             }
             else if (this.IsTimeout)
             {
-                logger?.LogInformation("Trino: Query timed out queryId:{0}, run time: {1} s, timeout {2} s.", Statement?.id, this.stopwatch.Elapsed.TotalSeconds, Session.Properties.ClientRequestTimeout.Value.TotalSeconds);
+                logger?.LogInformation("Trino: Query timed out queryId:{0}, run time: {1} s, timeout {2} s.", Statement?.id, this.stopwatch.Elapsed.TotalSeconds, Session.Properties.Timeout.Value.TotalSeconds);
                 await this.Cancel(QueryCancellationReason.TIMEOUT).ConfigureAwait(false);
                 throw new TimeoutException($"Trino query ran for {this.stopwatch.Elapsed.TotalSeconds} s, exceeding the timeout of {Session.Properties.Timeout.Value.TotalSeconds} s.");
             }
@@ -381,8 +392,8 @@ namespace Trino.Client
                 this.sessionSet.SetAuthorizationUser = setAuthorizationUser;
             }
 
-            string resetAuthorizationUser = headers.GetValuesOrEmpty(protocolHeaders.ResponseSetAuthorizationUser).FirstOrDefault();
-            if (setAuthorizationUser != null)
+            string resetAuthorizationUser = headers.GetValuesOrEmpty(protocolHeaders.ResponseResetAuthorizationUser).FirstOrDefault();
+            if (resetAuthorizationUser != null)
             {
                 if (bool.TryParse(resetAuthorizationUser, out bool resetAuthorizationUserBool))
                 {
@@ -397,7 +408,49 @@ namespace Trino.Client
                 {
                     continue;
                 }
-                this.sessionSet.SetSessionProperties.Add(keyValue[0], HttpUtility.UrlDecode(keyValue[1]));
+                this.sessionSet.SetSessionProperties[keyValue[0]] = HttpUtility.UrlDecode(keyValue[1]);
+            }
+
+            foreach (string sessionKey in headers.GetValuesOrEmpty(protocolHeaders.ResponseClearSession))
+            {
+                if (!string.IsNullOrEmpty(sessionKey))
+                {
+                    this.sessionSet.ClearSessionProperties.Add(sessionKey);
+                }
+            }
+
+            foreach (string role in headers.GetValuesOrEmpty(protocolHeaders.ResponseSetRole))
+            {
+                string[] keyValue = role.Split(new char[] { '=' }, 2);
+                if (keyValue.Length == 2)
+                {
+                    this.sessionSet.SetRoles[keyValue[0]] = ClientSelectedRole.Parse(HttpUtility.UrlDecode(keyValue[1]));
+                }
+            }
+
+            string setOriginalRoles = headers.GetValuesOrEmpty(protocolHeaders.ResponseSetOriginalRoles).FirstOrDefault();
+            if (setOriginalRoles != null)
+            {
+                foreach (string role in setOriginalRoles.Split(','))
+                {
+                    string trimmed = role.Trim();
+                    if (!string.IsNullOrEmpty(trimmed))
+                    {
+                        this.sessionSet.SetOriginalRoles.Add(trimmed);
+                    }
+                }
+            }
+
+            string startedTransactionId = headers.GetValuesOrEmpty(protocolHeaders.ResponseStartedTransactionId).FirstOrDefault();
+            if (startedTransactionId != null)
+            {
+                this.sessionSet.StartedTransactionId = startedTransactionId;
+            }
+
+            string clearTransactionId = headers.GetValuesOrEmpty(protocolHeaders.ResponseClearTransactionId).FirstOrDefault();
+            if (clearTransactionId != null && bool.TryParse(clearTransactionId, out bool shouldClearTransaction) && shouldClearTransaction)
+            {
+                this.sessionSet.ClearTransactionId = true;
             }
 
             foreach (string preparedStatement in headers.GetValuesOrEmpty(protocolHeaders.ResponseAddedPrepare))
@@ -426,6 +479,7 @@ namespace Trino.Client
         private void AddHeadersToRequest(HttpRequestMessage request, Dictionary<string, string> additionalPreparedStatements)
         {
             request.Headers.Add(protocolHeaders.RequestClientCapabilities, clientCapabilities);
+            request.Headers.Add(protocolHeaders.RequestQueryDataEncoding, queryDataEncoding);
 
             if (Session.Properties.AdditionalHeaders != null)
             {
@@ -517,9 +571,20 @@ namespace Trino.Client
                 }
             }
 
-            if (string.IsNullOrEmpty(Session.Properties.TransactionId))
+            // Always send Transaction-Id; "NONE" means no active transaction (Trino protocol requirement).
+            string transactionId = string.IsNullOrEmpty(Session.Properties.TransactionId)
+                ? "NONE"
+                : Session.Properties.TransactionId;
+            request.Headers.Add(protocolHeaders.RequestTransactionId, transactionId);
+
+            if (!string.IsNullOrEmpty(Session.Properties.OriginalUser))
             {
-                request.Headers.Add(protocolHeaders.RequestTransactionId, Session.Properties.TransactionId);
+                request.Headers.Add(protocolHeaders.RequestOriginalUser, Session.Properties.OriginalUser);
+            }
+
+            if (Session.Properties.OriginalRoles != null && Session.Properties.OriginalRoles.Count > 0)
+            {
+                request.Headers.Add(protocolHeaders.RequestOriginalRoles, string.Join(",", Session.Properties.OriginalRoles));
             }
         }
 

@@ -73,6 +73,11 @@ namespace Trino.Client
 
         public void Dispose()
         {
+            if (!isClosed)
+            {
+                isClosed = true;
+                pages.Dispose();
+            }
         }
 
         public bool MoveNext()

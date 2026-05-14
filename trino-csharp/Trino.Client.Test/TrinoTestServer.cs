@@ -6,6 +6,13 @@ namespace Trino.Client.Test
     internal class TrinoTestServer : IDisposable
     {
         public int Port { get; private set; }
+
+        /// <summary>
+        /// Captures all request headers received by the test server, in order.
+        /// Each element is the headers of one HTTP request.
+        /// </summary>
+        public List<Dictionary<string, string>> ReceivedRequestHeaders { get; } = new();
+
         private readonly HttpListener listener = new();
         private Task? serverTask;
         private bool cancelled = false;
@@ -34,17 +41,22 @@ namespace Trino.Client.Test
 
         private void StartServer(string testFile, TimeSpan waitBetweenResponses)
         {
-            // Check testFile exists before starting
             if (!File.Exists(testFile))
             {
                 throw new FileNotFoundException(testFile);
             }
 
-            this.serverTask = new Task(() =>
-            {
-                this.ConfigureTest(testFile, waitBetweenResponses);
-            });
-            this.serverTask.Start();
+            // Parse responses synchronously so errors surface before the server starts.
+            List<TestStep> testSteps = ParseTestSteps(testFile);
+
+            // Start listening synchronously so the port is bound before Create() returns,
+            // eliminating the race condition where clients connect before the listener is ready.
+            Console.WriteLine("Starting test server on port " + this.Port);
+            listener.Prefixes.Add($"http://localhost:{Port}/v1/");
+            listener.Start();
+            Console.WriteLine("Listening...");
+
+            this.serverTask = Task.Run(() => ServeResponses(testSteps, waitBetweenResponses));
         }
 
         /// <summary>
@@ -62,36 +74,28 @@ namespace Trino.Client.Test
             }
         }
 
-        internal void ConfigureTest(string testFile, TimeSpan waitBetweenResponses)
+        private List<TestStep> ParseTestSteps(string testFile)
         {
             bool isHeader = true;
             TestStep current = new();
             List<TestStep> testSteps = [];
-            try
+
+            foreach (string line in File.ReadAllLines(testFile))
             {
-                foreach (string line in File.ReadAllLines(testFile))
+                if (isHeader)
                 {
-                    if (isHeader)
-                    {
-                        isHeader = PrepareHeaders(current, line);
-                    }
-                    else
-                    {
-                        // replace port in response
-                        string portUpdatedResponse = line.Replace("localhost", "localhost:" + this.Port);
-                        current.Payload = portUpdatedResponse;
-                        testSteps.Add(current);
-                        current = new TestStep();
-                        isHeader = true;
-                    }
+                    isHeader = PrepareHeaders(current, line);
+                }
+                else
+                {
+                    current.Payload = line.Replace("localhost", "localhost:" + this.Port);
+                    testSteps.Add(current);
+                    current = new TestStep();
+                    isHeader = true;
                 }
             }
-            catch (Exception e)
-            {
-                Assert.Fail(e.Message);
-            }
 
-            QueueUpResponses(testSteps, waitBetweenResponses);
+            return testSteps;
         }
 
         private static bool PrepareHeaders(TestStep current, string line)
@@ -114,17 +118,16 @@ namespace Trino.Client.Test
             return isHeader;
         }
 
+        // Special header used in test scripts to set the HTTP response status code.
+        // Example: X-Test-Status-Code=503
+        // This header is consumed by the test server and is NOT forwarded to the client.
+        private const string TestStatusCodeHeader = "X-Test-Status-Code";
+
         /// <summary>
         /// Runs local webserver to respond with Trino HTTP responses.
         /// </summary>
-        /// <param name="responses"></param>
-        private void QueueUpResponses(List<TestStep> responses, TimeSpan waitBetweenResponses)
+        private void ServeResponses(List<TestStep> responses, TimeSpan waitBetweenResponses)
         {
-            Console.WriteLine("Starting test server on port " + this.Port);
-            // Add the prefixes.
-            listener.Prefixes.Add($"http://localhost:{Port}/v1/");
-            listener.Start();
-            Console.WriteLine("Listening...");
             // Note: The GetContext method blocks while waiting for a request.
             foreach (TestStep response in responses)
             {
@@ -141,6 +144,15 @@ namespace Trino.Client.Test
                 }
 
                 HttpListenerRequest request = contextTask.Result.Request;
+
+                // Capture request headers for test verification
+                var capturedHeaders = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                foreach (string key in request.Headers.AllKeys)
+                {
+                    capturedHeaders[key] = request.Headers[key];
+                }
+                ReceivedRequestHeaders.Add(capturedHeaders);
+
                 long contentLength = request.ContentLength64;
                 if (contentLength > 0)
                 {
@@ -159,9 +171,17 @@ namespace Trino.Client.Test
                     // Construct a response.
                     byte[] buffer = System.Text.Encoding.UTF8.GetBytes(response.Payload);
 
-                    // add headers
+                    // Check for X-Test-Status-Code to override default 200 status.
+                    if (response.Headers.TryGetValue(TestStatusCodeHeader, out List<string>? statusCodes)
+                        && int.TryParse(statusCodes.Count > 0 ? statusCodes[0] : null, out int overrideStatus))
+                    {
+                        httpListenerResponse.StatusCode = overrideStatus;
+                    }
+
+                    // add headers (skip the test-only status-code meta-header)
                     foreach (KeyValuePair<string, List<string>> header in response.Headers)
                     {
+                        if (header.Key == TestStatusCodeHeader) continue;
                         foreach (string value in header.Value)
                         {
                             httpListenerResponse.Headers.Add(header.Key, value);
@@ -176,10 +196,13 @@ namespace Trino.Client.Test
                         output.Write(buffer, 0, buffer.Length);
                     }
                     Console.WriteLine("Written response.");
-                    if (waitBetweenResponses.Ticks > 0)
-                    {
-                        Thread.Sleep(waitBetweenResponses);
-                    }
+                }
+                // Sleep after the response is fully committed so HttpListener does not
+                // serve incoming keep-alive requests with an empty body while the
+                // response object is still open.
+                if (waitBetweenResponses.Ticks > 0)
+                {
+                    Thread.Sleep(waitBetweenResponses);
                 }
             }
         }
@@ -203,6 +226,7 @@ namespace Trino.Client.Test
                 this.cancelled = true;
                 this.serverTask.Wait();
             }
+            listener.Close();
         }
     }
 }

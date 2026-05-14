@@ -132,10 +132,7 @@ namespace Trino.Client.Test
                     bool foundTimeout = false;
                     foreach (Exception item in e.InnerExceptions)
                     {
-                        if (item is TimeoutException)
-                        {
-                            foundTimeout = true;
-                        }
+                        if (item is TimeoutException) { foundTimeout = true; break; }
                     }
                     Assert.IsTrue(foundTimeout);
                 }
@@ -502,6 +499,153 @@ namespace Trino.Client.Test
             for (int i = 0; i < bytes.Length; i++)
             {
                 Assert.AreEqual(bytes[i], bytes_from_trino[i]);
+            }
+        }
+
+        /// <summary>
+        /// Verifies the client retries on 503 and eventually succeeds.
+        /// The test server returns 503 twice, then valid Trino responses.
+        /// </summary>
+        [TestMethod]
+        public void TestRetrySucceeds()
+        {
+            using (TrinoTestServer server = TrinoTestServer.Create("retry_success.txt"))
+            {
+                TrinoConnectionProperties properties = server.GetConnectionProperties();
+
+                using (TrinoConnection tc = new(properties))
+                {
+                    using (IDbCommand cmd = new TrinoCommand(tc, "select custkey from tpch.sf1.customer limit 0"))
+                    {
+                        IDataReader reader = cmd.ExecuteReader();
+                        int rowCount = 0;
+                        while (reader.Read())
+                        {
+                            rowCount++;
+                        }
+                        Assert.AreEqual(0, rowCount);
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Verifies the client throws TrinoException after exhausting all retries (MaxRetryCount = 5).
+        /// The test server returns 503 six times (original attempt + 5 retries = 6 total).
+        /// </summary>
+        [TestMethod]
+        public void TestRetryExhausted()
+        {
+            using (TrinoTestServer server = TrinoTestServer.Create("retry_exhausted.txt"))
+            {
+                TrinoConnectionProperties properties = server.GetConnectionProperties();
+
+                try
+                {
+                    using (TrinoConnection tc = new(properties))
+                    {
+                        using (IDbCommand cmd = new TrinoCommand(tc, "select 1"))
+                        {
+                            cmd.ExecuteReader();
+                        }
+                    }
+                    Assert.Fail("Expected TrinoException was not thrown.");
+                }
+                catch (TrinoException ex)
+                {
+                    StringAssert.Contains(ex.Message, "503");
+                    StringAssert.Contains(ex.Message, "retries");
+                }
+            }
+        }
+
+        /// <summary>
+        /// Verifies that X-Trino-Authorization-User request header is sent when AuthorizationUser is set.
+        /// </summary>
+        [TestMethod]
+        public void TestImpersonationHeaderSent()
+        {
+            using (TrinoTestServer server = TrinoTestServer.Create("impersonation_set.txt"))
+            {
+                TrinoConnectionProperties properties = server.GetConnectionProperties();
+                properties.User = "admin";
+                properties.AuthorizationUser = "impersonated_user";
+
+                using (TrinoConnection tc = new(properties))
+                {
+                    using (IDbCommand cmd = new TrinoCommand(tc, "select current_user"))
+                    {
+                        IDataReader reader = cmd.ExecuteReader();
+                        while (reader.Read()) { }
+                    }
+                }
+
+                // Verify the first request (POST) sent X-Trino-Authorization-User
+                Assert.IsTrue(server.ReceivedRequestHeaders.Count > 0, "Server received no requests.");
+                Dictionary<string, string> firstRequestHeaders = server.ReceivedRequestHeaders[0];
+                Assert.IsTrue(
+                    firstRequestHeaders.ContainsKey("X-Trino-Authorization-User"),
+                    "X-Trino-Authorization-User header was not sent.");
+                Assert.AreEqual("impersonated_user", firstRequestHeaders["X-Trino-Authorization-User"]);
+            }
+        }
+
+        /// <summary>
+        /// Verifies that X-Trino-Set-Authorization-User response header updates the session's AuthorizationUser.
+        /// </summary>
+        [TestMethod]
+        public void TestImpersonationSetResponseHeader()
+        {
+            using (TrinoTestServer server = TrinoTestServer.Create("impersonation_set.txt"))
+            {
+                TrinoConnectionProperties properties = server.GetConnectionProperties();
+                properties.User = "admin";
+                properties.AuthorizationUser = "original_impersonation";
+
+                using (TrinoConnection tc = new(properties))
+                {
+                    using (IDbCommand cmd = new TrinoCommand(tc, "select current_user"))
+                    {
+                        IDataReader reader = cmd.ExecuteReader();
+                        while (reader.Read()) { }
+                    }
+
+                    // After receiving X-Trino-Set-Authorization-User=impersonated_user,
+                    // the session should reflect the server-set value.
+                    Assert.AreEqual(
+                        "impersonated_user",
+                        tc.ConnectionSession.Properties.AuthorizationUser,
+                        "Session AuthorizationUser was not updated from X-Trino-Set-Authorization-User response header.");
+                }
+            }
+        }
+
+        /// <summary>
+        /// Verifies that X-Trino-Reset-Authorization-User response header clears the session's AuthorizationUser.
+        /// </summary>
+        [TestMethod]
+        public void TestImpersonationResetResponseHeader()
+        {
+            using (TrinoTestServer server = TrinoTestServer.Create("impersonation_reset.txt"))
+            {
+                TrinoConnectionProperties properties = server.GetConnectionProperties();
+                properties.User = "admin";
+                properties.AuthorizationUser = "impersonated_user";
+
+                using (TrinoConnection tc = new(properties))
+                {
+                    using (IDbCommand cmd = new TrinoCommand(tc, "select current_user"))
+                    {
+                        IDataReader reader = cmd.ExecuteReader();
+                        while (reader.Read()) { }
+                    }
+
+                    // After receiving X-Trino-Reset-Authorization-User=true,
+                    // the session AuthorizationUser should be cleared (null).
+                    Assert.IsNull(
+                        tc.ConnectionSession.Properties.AuthorizationUser,
+                        "Session AuthorizationUser was not cleared by X-Trino-Reset-Authorization-User response header.");
+                }
             }
         }
     }

@@ -4,7 +4,6 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
   </PropertyGroup>
@@ -17,17 +16,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\Trino.Data.ADO\Trino.Data.ADO.csproj" />
-    <ProjectReference Include="..\Trino.Client.Auth\Trino.Client.Auth.csproj" />
-    <ProjectReference Include="..\Trino.Client\Trino.Client.csproj" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <!-- Copy all test scripts to the output root so tests can reference them by filename only -->
-    <None Update="scripts\*.txt">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <TargetPath>%(Filename)%(Extension)</TargetPath>
-    </None>
+    <ProjectReference Include="..\Trino.Platform.Samples\Trino.Platform.Samples.csproj" />
   </ItemGroup>
 
 </Project>

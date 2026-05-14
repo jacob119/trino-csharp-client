@@ -15,6 +15,7 @@ namespace Trino.Client
         {
             ClientTags = new HashSet<string>();
             ExtraCredentials = new Dictionary<string, string>();
+            OriginalRoles = new HashSet<string>();
             PreparedStatements = new Dictionary<string, string>();
             Properties = new Dictionary<string, string>();
             ResourceEstimates = new Dictionary<string, string>();
@@ -33,6 +34,8 @@ namespace Trino.Client
         // Authentication and Security
         public string User { get; set; }
         public string AuthorizationUser { get; set; }
+        public string OriginalUser { get; set; }
+        public HashSet<string> OriginalRoles { get; set; }
         public string Principal { get; set; }
         public Dictionary<string, string> ExtraCredentials { get; set; }
         public Dictionary<string, ClientSelectedRole> Roles { get; set; }
@@ -105,12 +108,16 @@ namespace Trino.Client
                 ClientTags = ClientTags,
                 CompressionDisabled = CompressionDisabled,
                 ExtraCredentials = ExtraCredentials,
+                OriginalUser = OriginalUser,
+                OriginalRoles = updates.SetOriginalRoles != null && updates.SetOriginalRoles.Count > 0
+                    ? updates.SetOriginalRoles
+                    : OriginalRoles,
                 Path = updates.SetPath ?? Path,
                 PreparedStatements = MergeDictionary(PreparedStatements, updates.ResponseAddedPrepare, updates.ResponseDeallocatedPrepare),
                 Principal = Principal,
-                Properties = MergeDictionary(updates.SetSessionProperties, Properties),
+                Properties = ApplySessionUpdates(Properties, updates.SetSessionProperties, updates.ClearSessionProperties),
                 ResourceEstimates = ResourceEstimates,
-                Roles = Roles,
+                Roles = MergeRoles(Roles, updates.SetRoles),
                 Schema = updates.SetSchema ?? Schema,
                 Server = Server,
                 ServerType = ServerType,
@@ -119,9 +126,46 @@ namespace Trino.Client
                 Timeout = Timeout,
                 TimeZone = TimeZone,
                 TraceToken = TraceToken,
-                TransactionId = TransactionId,
+                TransactionId = updates.ClearTransactionId ? null : (updates.StartedTransactionId ?? TransactionId),
                 User = User
             };
+        }
+
+        /// <summary>
+        /// Applies server-side session updates: SET overrides existing keys, CLEAR removes them.
+        /// </summary>
+        private static Dictionary<string, string> ApplySessionUpdates(
+            Dictionary<string, string> existing,
+            Dictionary<string, string> setProperties,
+            HashSet<string> clearProperties)
+        {
+            Dictionary<string, string> result = new Dictionary<string, string>(existing);
+            foreach (KeyValuePair<string, string> item in setProperties)
+            {
+                result[item.Key] = item.Value;
+            }
+            foreach (string key in clearProperties)
+            {
+                result.Remove(key);
+            }
+            return result;
+        }
+
+        /// <summary>
+        /// Merges role updates from the server into the existing roles dictionary.
+        /// </summary>
+        private static Dictionary<string, ClientSelectedRole> MergeRoles(
+            Dictionary<string, ClientSelectedRole> existing,
+            Dictionary<string, ClientSelectedRole> updates)
+        {
+            if (updates == null || updates.Count == 0)
+                return existing;
+            Dictionary<string, ClientSelectedRole> result = new Dictionary<string, ClientSelectedRole>(existing);
+            foreach (KeyValuePair<string, ClientSelectedRole> item in updates)
+            {
+                result[item.Key] = item.Value;
+            }
+            return result;
         }
 
         /// <summary>

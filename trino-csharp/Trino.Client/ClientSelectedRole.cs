@@ -47,5 +47,31 @@ namespace Trino.Client
         {
             return new ClientSelectedRole(this.RoleType, this.Role);
         }
+
+        /// <summary>
+        /// Serializes the role to the Trino wire format: "ALL", "NONE", or "ROLE{roleName}".
+        /// </summary>
+        public override string ToString()
+        {
+            if (RoleType == Type.ALL) return "ALL";
+            if (RoleType == Type.NONE) return "NONE";
+            if (RoleType == Type.ROLE) return "ROLE{" + Role + "}";
+            throw new InvalidOperationException("Unexpected role type: " + RoleType);
+        }
+
+        /// <summary>
+        /// Parses a role from the Trino wire format: "ALL", "NONE", or "ROLE{roleName}".
+        /// </summary>
+        public static ClientSelectedRole Parse(string value)
+        {
+            if (value == null) throw new ArgumentNullException(nameof(value));
+            if (value.Equals("ALL", StringComparison.OrdinalIgnoreCase))
+                return new ClientSelectedRole(Type.ALL, string.Empty);
+            if (value.Equals("NONE", StringComparison.OrdinalIgnoreCase))
+                return new ClientSelectedRole(Type.NONE, string.Empty);
+            if (value.StartsWith("ROLE{", StringComparison.OrdinalIgnoreCase) && value.EndsWith("}"))
+                return new ClientSelectedRole(Type.ROLE, value.Substring(5, value.Length - 6));
+            throw new ArgumentException($"Cannot parse role value: '{value}'");
+        }
     }
 }

@@ -94,11 +94,15 @@ namespace Trino.Data.ADO.Client
         }
 
         /// <summary>
-        /// Does not affect the TrinoDataReader except to set the state to closed.
+        /// Closes the reader and cancels the server-side query if not all rows were consumed.
         /// </summary>
         public override void Close()
         {
-            isClosed = true;
+            if (!isClosed)
+            {
+                isClosed = true;
+                records.Dispose();
+            }
         }
 
         public override bool GetBoolean(int i)

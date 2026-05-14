@@ -181,6 +181,24 @@ namespace Trino.Data.ADO.Server
         public string User { get; set; }
 
         /// <summary>
+        /// Sets the user to impersonate (X-Trino-Authorization-User).
+        /// The authenticated user must have impersonation privileges on the Trino server.
+        /// </summary>
+        public string AuthorizationUser { get; set; }
+
+        /// <summary>
+        /// Sets the original end-user identity (X-Trino-Original-User) for proxy/gateway scenarios
+        /// where a service account submits queries on behalf of end users.
+        /// </summary>
+        public string OriginalUser { get; set; }
+
+        /// <summary>
+        /// Sets the original user's roles (X-Trino-Original-Roles) for proxy/gateway scenarios.
+        /// Comma-separated role names.
+        /// </summary>
+        public HashSet<string> OriginalRoles { get; set; }
+
+        /// <summary>
         /// Allows test connection to be enabled. If false, any connection test will ignored, even if explicitly called.
         /// </summary>
         public bool TestConnection { get; set; }
@@ -215,6 +233,9 @@ namespace Trino.Data.ADO.Server
                 TestConnection = this.TestConnection,
                 TraceToken = this.TraceToken,
                 User = this.User,
+                AuthorizationUser = this.AuthorizationUser,
+                OriginalUser = this.OriginalUser,
+                OriginalRoles = this.OriginalRoles == null ? new HashSet<string>() : new HashSet<string>(this.OriginalRoles),
                 AdditionalHeaders = this.AdditionalHeaders == null ? new Dictionary<string, string>() : this.AdditionalHeaders.ToDictionary(entry => entry.Key, entry => entry.Value),
                 AllowHostNameCNMismatch = this.AllowHostNameCNMismatch,
                 AllowSelfSignedServerCert = this.AllowSelfSignedServerCert,

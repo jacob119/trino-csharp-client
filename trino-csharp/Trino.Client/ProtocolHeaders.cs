@@ -24,6 +24,8 @@ namespace Trino.Client
         internal string RequestClientCapabilities { get; private set; }
         internal string RequestResourceEstimate { get; private set; }
         internal string RequestExtraCredential { get; private set; }
+        internal string RequestOriginalRoles { get; private set; }
+        internal string RequestQueryDataEncoding { get; private set; }
         internal string ResponseSetCatalog { get; private set; }
         internal string ResponseSetSchema { get; private set; }
         internal string ResponseSetPath { get; private set; }
@@ -34,6 +36,9 @@ namespace Trino.Client
         internal string ResponseDeallocatedPrepare { get; private set; }
         internal string ResponseStartedTransactionId { get; private set; }
         internal string ResponseClearTransactionId { get; private set; }
+        internal string ResponseSetOriginalRoles { get; private set; }
+        internal string ResponseQueryDataEncoding { get; private set; }
+        internal string RequestAuthorizationUser { get; private set; }
         internal string ResponseSetAuthorizationUser { get; private set; }
         internal string ResponseResetAuthorizationUser { get; private set; }
 
@@ -64,6 +69,8 @@ namespace Trino.Client
             RequestClientCapabilities = prefix + "Client-Capabilities";
             RequestResourceEstimate = prefix + "Resource-Estimate";
             RequestExtraCredential = prefix + "Extra-Credential";
+            RequestOriginalRoles = prefix + "Original-Roles";
+            RequestQueryDataEncoding = prefix + "Query-Data-Encoding";
             ResponseSetCatalog = prefix + "Set-Catalog";
             ResponseSetSchema = prefix + "Set-Schema";
             ResponseSetPath = prefix + "Set-Path";
@@ -74,6 +81,9 @@ namespace Trino.Client
             ResponseDeallocatedPrepare = prefix + "Deallocated-Prepare";
             ResponseStartedTransactionId = prefix + "Started-Transaction-Id";
             ResponseClearTransactionId = prefix + "Clear-Transaction-Id";
+            ResponseSetOriginalRoles = prefix + "Set-Original-Roles";
+            ResponseQueryDataEncoding = prefix + "Query-Data-Encoding";
+            RequestAuthorizationUser = prefix + "Authorization-User";
             ResponseSetAuthorizationUser = prefix + "Set-Authorization-User";
             ResponseResetAuthorizationUser = prefix + "Reset-Authorization-User";
         }
