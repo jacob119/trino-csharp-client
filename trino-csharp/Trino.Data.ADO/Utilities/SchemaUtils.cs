@@ -1,4 +1,3 @@
-using Microsoft.Extensions.Logging;
 using Trino.Client.Logging;
 using Trino.Client.Utils;
 using Trino.Client;
@@ -30,8 +29,10 @@ namespace Trino.Data.ADO.Utilities
             }
             else
             {
+                string catalog = ValidateIdentifier(connection.ConnectionSession.Properties.Catalog, "catalog");
                 string whereIfFilter = string.IsNullOrEmpty(filter) ? "" : "WHERE";
-                return new TrinoCommand(connection, $"SELECT * FROM {connection.ConnectionSession.Properties.Catalog}.information_schema.{informationSchemaTable} {whereIfFilter} {filter}").RunQuery().SafeResult().BuildDataTableAsync().SafeResult();
+                using (var cmd = new TrinoCommand(connection, $"SELECT * FROM \"{catalog}\".information_schema.{informationSchemaTable} {whereIfFilter} {filter}"))
+                    return cmd.RunQuery().SafeResult().BuildDataTableAsync().SafeResult();
             }
         }
 
@@ -105,34 +106,52 @@ namespace Trino.Data.ADO.Utilities
             }
         }
 
+        private static string ValidateIdentifier(string value, string name)
+        {
+            if (string.IsNullOrEmpty(value) || !legalIdentifierName.IsMatch(value))
+                throw new TrinoException($"Illegal {name} identifier in session: '{value}'. Must be alphanumeric and underscores.");
+            return value;
+        }
+
         /// <summary>
-        /// Queries catalogs separately, ignoring any that do not respond in the timeout configured in the session.
+        /// Queries catalogs separately using true async I/O, ignoring any that do not respond in the timeout.
         /// </summary>
         private static DataTable GetAllInformationSchemaWithTimeout(TrinoConnection connection, ILoggerWrapper logger, string informationSchemaTable, string filter)
         {
-            List<string> catalogs = new TrinoCommand(connection, "SHOW CATALOGS").RunQuery().SafeResult().Select(row => row[0].ToString()).ToList();
+            List<string> catalogs;
+            using (var cmd = new TrinoCommand(connection, "SHOW CATALOGS"))
+                catalogs = cmd.RunQuery().SafeResult().Select(row => row[0].ToString()).ToList();
+
             ConcurrentBag<DataTable> schemas = new ConcurrentBag<DataTable>();
-            // union all query will fail if any catalog does not respond, so we issue a query per catalog respecting the timeout
-            Parallel.ForEach(catalogs, catalog =>
+
+            // Use Task.WhenAll instead of Parallel.ForEach to avoid blocking thread pool threads on async I/O.
+            var tasks = catalogs.Select(catalog => Task.Run(async () =>
             {
                 try
                 {
-                    string command = $"SELECT * FROM {catalog}.information_schema.{informationSchemaTable} WHERE {filter}";
-                    schemas.Add(new TrinoCommand(connection, command).RunQuery().SafeResult().BuildDataTableAsync().SafeResult());
+                    string safeId = ValidateIdentifier(catalog, "catalog");
+                    string command = $"SELECT * FROM \"{safeId}\".information_schema.{informationSchemaTable} WHERE {filter}";
+                    using (var cmd = new TrinoCommand(connection, command))
+                    {
+                        var executor = await cmd.RunQuery().ConfigureAwait(false);
+                        schemas.Add(executor.BuildDataTableAsync().SafeResult());
+                    }
                 }
                 catch (TrinoAggregateException e)
                 {
                     // Some catalogs can be broken or slow to respond. This avoids blocking the entire query.
                     if (e.InnerExceptions.Any(ex => ex is TimeoutException))
                     {
-                        logger.LogWarning($"Catalog {catalog} did not respond to the query in time. Skipping.");
+                        logger?.LogWarning($"Catalog {catalog} did not respond to the query in time. Skipping.");
                     }
                     else
                     {
                         throw;
                     }
                 }
-            });
+            }));
+
+            Task.WhenAll(tasks).ConfigureAwait(false).GetAwaiter().GetResult();
 
             DataTable merged = null;
             foreach (DataTable dt in schemas)

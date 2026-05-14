@@ -77,22 +77,12 @@ namespace Trino.Data.ADO.Server
         /// </summary>
         public override string DataSource => ConnectionSession.Properties.Server?.ToString();
 
-        private string _cachedServerVersion;
+        private readonly Lazy<string> _cachedServerVersion;
 
         /// <summary>
         /// Gets the version of the connected Trino server. Cached after first call.
         /// </summary>
-        public override string ServerVersion
-        {
-            get
-            {
-                if (_cachedServerVersion == null)
-                {
-                    _cachedServerVersion = new InfoClientV1(ConnectionSession).Get().nodeVersion.version;
-                }
-                return _cachedServerVersion;
-            }
-        }
+        public override string ServerVersion => _cachedServerVersion.Value;
 
         /// <summary>
         /// Event handlers for receiving query statistics and errors.
@@ -118,6 +108,7 @@ namespace Trino.Data.ADO.Server
             }
 
             InfoMessage = new List<Action<TrinoStats, TrinoError>>();
+            _cachedServerVersion = new Lazy<string>(() => new InfoClientV1(ConnectionSession).Get().nodeVersion.version);
         }
 
         /// <summary>

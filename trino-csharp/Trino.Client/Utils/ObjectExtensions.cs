@@ -21,7 +21,7 @@ namespace Trino.Client.Utils
             {
                 return values;
             }
-            return new List<string>();
+            return Array.Empty<string>();
         }
     }
 }

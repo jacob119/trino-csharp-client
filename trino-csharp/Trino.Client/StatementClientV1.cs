@@ -40,6 +40,21 @@ namespace Trino.Client
         private static readonly HashSet<HttpStatusCode> OK = new HashSet<HttpStatusCode> { HttpStatusCode.OK };
         private static readonly HashSet<HttpStatusCode> OKorNoContent = new HashSet<HttpStatusCode> { HttpStatusCode.OK, HttpStatusCode.NoContent };
 
+        // Shared clients for sessions that don't need custom TLS — reused across queries to prevent socket exhaustion.
+        private static readonly HttpClient sharedHttpClientCompressed = CreateSharedHttpClient(compressionDisabled: false);
+        private static readonly HttpClient sharedHttpClientNoCompression = CreateSharedHttpClient(compressionDisabled: true);
+
+        private static HttpClient CreateSharedHttpClient(bool compressionDisabled)
+        {
+            var handler = compressionDisabled
+                ? new HttpClientHandler()
+                : new HttpClientHandler { AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate };
+            var client = new HttpClient(handler) { Timeout = Constants.HttpConnectionTimeout };
+            if (!compressionDisabled)
+                client.DefaultRequestHeaders.AcceptEncoding.Add(new StringWithQualityHeaderValue("gzip"));
+            return client;
+        }
+
         /// <summary>
         /// The default prefix for a parameterized query used when properties are provided.
         /// </summary>
@@ -95,8 +110,24 @@ namespace Trino.Client
             this.stopwatch.Start();
             this.State = new QueryState();
 
-            HttpClientHandler handler = this.Session.Properties.CompressionDisabled ? new HttpClientHandler() : new HttpClientHandler() { AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate };
+            bool needsCustomHandler = session.Properties.UseSystemTrustStore
+                || !string.IsNullOrEmpty(session.Properties.TrustedCertPath)
+                || !string.IsNullOrEmpty(session.Properties.TrustedCertificate)
+                || session.Properties.AllowHostNameCNMismatch
+                || session.Properties.AllowSelfSignedServerCert;
 
+            if (!needsCustomHandler)
+            {
+                this.httpClient = session.Properties.CompressionDisabled
+                    ? sharedHttpClientNoCompression
+                    : sharedHttpClientCompressed;
+                _ownsHttpClient = false;
+                return;
+            }
+
+            HttpClientHandler handler = session.Properties.CompressionDisabled
+                ? new HttpClientHandler()
+                : new HttpClientHandler { AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate };
 
             if (session.Properties.UseSystemTrustStore)
             {
@@ -130,25 +161,18 @@ namespace Trino.Client
                 }
             }
 
-            handler.ServerCertificateCustomValidationCallback = (HttpRequestMessage, X509Certificate2, x509Chain, sslPolicyErrors) =>
+            handler.ServerCertificateCustomValidationCallback = (req, cert, chain, sslPolicyErrors) =>
             {
-                // Allow CN mismatch
                 if (session.Properties.AllowHostNameCNMismatch
                     && sslPolicyErrors == SslPolicyErrors.RemoteCertificateNameMismatch)
-                {
                     return true;
-                }
 
-                // Allow self-signed certificates
                 if (session.Properties.AllowSelfSignedServerCert
                     && sslPolicyErrors == SslPolicyErrors.RemoteCertificateChainErrors
-                    && x509Chain.ChainStatus.Length == 1
-                    && x509Chain.ChainStatus[0].Status == X509ChainStatusFlags.UntrustedRoot)
-                {
+                    && chain.ChainStatus.Length == 1
+                    && chain.ChainStatus[0].Status == X509ChainStatusFlags.UntrustedRoot)
                     return true;
-                }
 
-                // Default validation is not to allow any policy errors.
                 return sslPolicyErrors == SslPolicyErrors.None;
             };
 
@@ -157,11 +181,8 @@ namespace Trino.Client
             try
             {
                 this.httpClient.Timeout = Constants.HttpConnectionTimeout;
-
-                if (!this.Session.Properties.CompressionDisabled)
-                {
+                if (!session.Properties.CompressionDisabled)
                     this.httpClient.DefaultRequestHeaders.AcceptEncoding.Add(new StringWithQualityHeaderValue("gzip"));
-                }
             }
             catch
             {
@@ -299,20 +320,16 @@ namespace Trino.Client
         /// </summary>
         internal async Task<ResponseQueueStatement> Advance()
         {
-            if (this.Statement.nextUri.Contains("/executing"))
+            string requestUri = this.Statement.nextUri;
+            if (requestUri.Contains("/executing"))
             {
-                if (this.Statement.nextUri.Contains("?"))
-                {
-                    this.Statement.nextUri += $"&targetResultSize={Constants.MaxTargetResultSizeMB}MB";
-                }
-                else
-                {
-                    this.Statement.nextUri += $"?targetResultSize={Constants.MaxTargetResultSizeMB}MB";
-                }
+                requestUri += requestUri.Contains("?")
+                    ? $"&targetResultSize={Constants.MaxTargetResultSizeMB}MB"
+                    : $"?targetResultSize={Constants.MaxTargetResultSizeMB}MB";
             }
-            logger?.LogDebug("Trino: request: {1}", this.Statement.nextUri);
+            logger?.LogDebug("Trino: request: {1}", requestUri);
 
-            string responseStr = await this.GetAsync(new Uri(this.Statement.nextUri), OK).ConfigureAwait(false);
+            string responseStr = await this.GetAsync(new Uri(requestUri), OK).ConfigureAwait(false);
             logger?.LogDebug("Trino: response: {1}", responseStr);
             QueryResultPage response = JsonConvert.DeserializeObject<QueryResultPage>(responseStr);
             if (response == null)

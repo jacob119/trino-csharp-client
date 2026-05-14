@@ -6,6 +6,7 @@ using System.Threading;
 using System.IO;
 using System.Threading.Tasks;
 using Newtonsoft.Json;
+using Trino.Client.Auth;
 using Trino.Client.Logging;
 using System.Net.Http.Headers;
 
@@ -110,7 +111,7 @@ namespace Trino.Client
             {
                 using (HttpRequestMessage request = requestFactory())
                 {
-                    AddHeaders(protocolHeaders, request, session);
+                    await AddHeadersAsync(protocolHeaders, request, session, token).ConfigureAwait(false);
 
                     try
                     {
@@ -191,11 +192,15 @@ namespace Trino.Client
         }
 
         /// <summary>
-        /// Adds headers that are common to all requests
+        /// Adds headers that are common to all requests.
+        /// Uses the async credential path when the auth implementation supports it.
         /// </summary>
-        internal static void AddHeaders(ProtocolHeaders protocolHeaders, HttpRequestMessage request, ClientSession session)
+        internal static async Task AddHeadersAsync(ProtocolHeaders protocolHeaders, HttpRequestMessage request, ClientSession session, CancellationToken cancellationToken)
         {
-            session.Auth?.AddCredentialToRequest(request);
+            if (session.Auth is ITrinoAuthAsync asyncAuth)
+                await asyncAuth.AddCredentialToRequestAsync(request, cancellationToken).ConfigureAwait(false);
+            else
+                session.Auth?.AddCredentialToRequest(request);
 
             if (!string.IsNullOrEmpty(session.Properties.User))
             {

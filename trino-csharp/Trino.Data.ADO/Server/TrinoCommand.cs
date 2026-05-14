@@ -1,5 +1,6 @@
 using Trino.Client;
 using Trino.Client.Logging;
+using Trino.Client.Utils;
 using System;
 using System.Collections.Generic;
 using System.Data;
@@ -19,6 +20,7 @@ namespace Trino.Data.ADO.Server
     {
         private readonly TrinoParameterCollection parameters;
         private TrinoConnection connection;
+        private TimeSpan? _commandTimeout;
 
         /// <summary>
         /// Gets the cancellation token source that triggers query cancellation, including server-side cancellation.
@@ -78,7 +80,7 @@ namespace Trino.Data.ADO.Server
         {
             if (timeout != TimeSpan.MaxValue)
             {
-                connection.ConnectionSession.Properties.Timeout = timeout;
+                _commandTimeout = timeout;
             }
             Connection = connection;
             CommandText = statement;
@@ -93,13 +95,16 @@ namespace Trino.Data.ADO.Server
 
         /// <summary>
         /// Gets or sets the wait time in seconds before terminating the attempt to execute a command and generating an error.
+        /// Setting this value does NOT modify the shared connection session — it applies only to this command.
         /// </summary>
         public override int CommandTimeout
         {
-            get => connection.ConnectionSession.Properties.Timeout.HasValue
-                ? (int)connection.ConnectionSession.Properties.Timeout.Value.TotalSeconds
-                : int.MaxValue;
-            set => connection.ConnectionSession.Properties.Timeout = TimeSpan.FromSeconds(value);
+            get => _commandTimeout.HasValue
+                ? (int)_commandTimeout.Value.TotalSeconds
+                : connection.ConnectionSession.Properties.Timeout.HasValue
+                    ? (int)connection.ConnectionSession.Properties.Timeout.Value.TotalSeconds
+                    : int.MaxValue;
+            set => _commandTimeout = value == int.MaxValue ? (TimeSpan?)null : TimeSpan.FromSeconds(value);
         }
 
         /// <summary>
@@ -203,7 +208,7 @@ namespace Trino.Data.ADO.Server
             return await RecordExecutor.Execute(
                 logger: Logger,
                 queryStatusNotifications: connection.InfoMessage,
-                session: connection.ConnectionSession,
+                session: GetSessionForExecution(),
                 statement: CommandText,
                 queryParameters: ConvertParameters(Parameters),
                 bufferSize: bufferSizeBytes,
@@ -263,12 +268,26 @@ namespace Trino.Data.ADO.Server
             return await RecordExecutor.Execute(
                 logger: Logger,
                 queryStatusNotifications: connection.InfoMessage,
-                session: connection.ConnectionSession,
+                session: GetSessionForExecution(),
                 statement: CommandText,
                 queryParameters: ConvertParameters(Parameters),
                 bufferSize: Constants.DefaultBufferSizeBytes,
                 isQuery: false,
                 cancellationToken: CancellationTokenSource.Token).ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// Returns the session to use for execution, applying the per-command timeout if set.
+        /// Does not mutate the connection's shared session.
+        /// </summary>
+        private ClientSession GetSessionForExecution()
+        {
+            if (_commandTimeout == null)
+                return connection.ConnectionSession;
+
+            var props = connection.ConnectionSession.Properties.ShallowCopy();
+            props.Timeout = _commandTimeout;
+            return new ClientSession(props, connection.ConnectionSession.Auth);
         }
 
         /// <summary>

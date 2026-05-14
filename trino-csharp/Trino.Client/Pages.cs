@@ -72,17 +72,20 @@ namespace Trino.Client
         }
 
         /// <summary>
-        /// Consume the next page synchroniously.
+        /// Consume the next page synchronously.
         /// </summary>
         public bool MoveNext()
         {
-            return this.MoveNextAsync().SafeResult();
+            return this.MoveNextAsync(System.Threading.CancellationToken.None).SafeResult();
         }
+
+        Task<bool> IAsyncEnumeratorPlaceholder<QueryResultPage>.MoveNextAsync() =>
+            MoveNextAsync(System.Threading.CancellationToken.None);
 
         /// <summary>
         /// Consume the next page.
         /// </summary>
-        public async Task<bool> MoveNextAsync()
+        public async Task<bool> MoveNextAsync(System.Threading.CancellationToken cancellationToken = default)
         {
             // Acquire BEFORE the try so the finally only runs when we actually hold the semaphore.
             if (!allowOneThreadToReadPages.Wait(0))
@@ -104,7 +107,7 @@ namespace Trino.Client
                 pageQueue.StartReadAhead();
 
                 ResponseQueueStatement response;
-                while ((response = await pageQueue.DequeueOrNull().ConfigureAwait(false)) == null)
+                while ((response = await pageQueue.DequeueOrNull(cancellationToken).ConfigureAwait(false)) == null)
                 {
                     pageQueue.ThrowIfErrors();
 
@@ -142,17 +145,18 @@ namespace Trino.Client
         }
 
         /// <summary>
-        /// Cancels and terminates the query.
+        /// Cancels and terminates the query. The server-side DELETE is sent fire-and-forget
+        /// to avoid blocking the caller (Dispose must not block on network I/O).
         /// </summary>
         public void Dispose()
         {
             try
             {
-                pageQueue.Cancel().ConfigureAwait(false).GetAwaiter().GetResult();
-            }
-            catch (Exception ex)
-            {
-                logger?.LogWarning("Trino: Exception during query disposal: {0}", ex.Message);
+                // Fire-and-forget: send the server-side cancel without blocking.
+                // Errors are swallowed here as Dispose must not throw.
+                _ = pageQueue.Cancel().ContinueWith(
+                    t => logger?.LogWarning("Trino: Exception during query disposal: {0}", t.Exception?.Message),
+                    System.Threading.Tasks.TaskContinuationOptions.OnlyOnFaulted);
             }
             finally
             {

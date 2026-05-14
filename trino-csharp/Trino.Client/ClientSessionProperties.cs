@@ -73,6 +73,12 @@ namespace Trino.Client
         public string TrustedCertificate { get; set; }
 
         /// <summary>
+        /// Returns a shallow copy of this instance. Scalar properties are independent; collection
+        /// references are shared (sufficient for per-command timeout overrides).
+        /// </summary>
+        internal ClientSessionProperties ShallowCopy() => (ClientSessionProperties)MemberwiseClone();
+
+        /// <summary>
         /// Creates a server URI from component pieces for easier server configuration.
         /// </summary>
         /// <param name="host">The hostname of the server.</param>

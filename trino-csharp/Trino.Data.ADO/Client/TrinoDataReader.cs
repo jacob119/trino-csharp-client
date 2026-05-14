@@ -129,17 +129,11 @@ namespace Trino.Data.ADO.Client
         public override long GetBytes(int i, long fieldOffset, byte[] buffer, int bufferoffset, int length)
         {
             byte[] value = records.GetValue<byte[]>(i, "varbinary", false);
-            if (value.Length > buffer.Length - bufferoffset)
-            {
-                throw new ArgumentException("Buffer is too small to hold the requested value");
-            }
-
-            // fill the buffer with the value
-            for (int j = 0; j < length; j++)
-            {
-                buffer[j + bufferoffset] = value[(int)fieldOffset + j];
-            }
-            return value.Length;
+            if (buffer == null) return value.Length;
+            int available = Math.Min(length, value.Length - (int)fieldOffset);
+            if (available < 0) available = 0;
+            Array.Copy(value, (int)fieldOffset, buffer, bufferoffset, available);
+            return available;
         }
 
         public override char GetChar(int i)
@@ -148,26 +142,17 @@ namespace Trino.Data.ADO.Client
         }
 
         /// <summary>
-        /// Reads the value of the specified column into an exstiing buffer.
+        /// Reads the value of the specified column into an existing buffer.
         /// </summary>
         public override long GetChars(int i, long fieldoffset, char[] buffer, int bufferoffset, int length)
         {
             string value = records.GetValue<string>(i);
-            if (value == null)
-            {
-                return 0;
-            }
-            if (value.Length > buffer.Length - bufferoffset)
-            {
-                throw new ArgumentException("Buffer is too small to hold the requested value");
-            }
-
-            // fill the buffer with the value
-            for (int j = 0; j < length; j++)
-            {
-                buffer[j + bufferoffset] = value[(int)fieldoffset + j];
-            }
-            return value.Length;
+            if (value == null) return 0;
+            if (buffer == null) return value.Length;
+            int available = Math.Min(length, value.Length - (int)fieldoffset);
+            if (available < 0) available = 0;
+            value.CopyTo((int)fieldoffset, buffer, bufferoffset, available);
+            return available;
         }
 
         public override string GetDataTypeName(int i)
@@ -303,7 +288,7 @@ namespace Trino.Data.ADO.Client
 
         public override string GetString(int i)
         {
-            return records.Current[i].ToString();
+            return records.Current[i]?.ToString();
         }
 
         public override object GetValue(int i)
@@ -350,7 +335,7 @@ namespace Trino.Data.ADO.Client
         public override async Task<bool> ReadAsync(CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            return await records.MoveNextAsync().ConfigureAwait(false);
+            return await records.MoveNextAsync(cancellationToken).ConfigureAwait(false);
         }
     }
 }

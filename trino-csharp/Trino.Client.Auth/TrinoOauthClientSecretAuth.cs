@@ -3,10 +3,11 @@ using System.Collections.Generic;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
+using Trino.Client.Auth;
 
 namespace Trino.Client.Auth
 {
-    public class TrinoOauthClientSecretAuth : ITrinoAuth, IDisposable
+    public class TrinoOauthClientSecretAuth : ITrinoAuthAsync, IDisposable
     {
         private static readonly HttpClient _sharedHttpClient = new HttpClient();
         public string TokenEndpoint { get; set; }
@@ -39,29 +40,48 @@ namespace Trino.Client.Auth
             {
                 throw new InvalidOperationException("OAuth2 configuration is missing required properties.");
             }
+            // Validate config only; token fetch is deferred to the async path.
+        }
 
-            RefreshIfExpiredAsync().ConfigureAwait(false).GetAwaiter().GetResult();
+        public async Task AuthorizeAndValidateAsync(CancellationToken cancellationToken)
+        {
+            if (string.IsNullOrEmpty(TokenEndpoint) || string.IsNullOrEmpty(ClientId) ||
+                string.IsNullOrEmpty(ClientSecret) || string.IsNullOrEmpty(Scope))
+            {
+                throw new InvalidOperationException("OAuth2 configuration is missing required properties.");
+            }
+            await RefreshIfExpiredAsync(cancellationToken).ConfigureAwait(false);
         }
 
         public void AddCredentialToRequest(HttpRequestMessage httpRequestMessage)
         {
-            RefreshIfExpiredAsync().ConfigureAwait(false).GetAwaiter().GetResult();
-            httpRequestMessage.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", _accessToken);
+            // Sync callers fall through here; token must have been pre-fetched via AuthorizeAndValidate.
+            if (string.IsNullOrEmpty(_accessToken))
+                RefreshIfExpiredAsync(CancellationToken.None).ConfigureAwait(false).GetAwaiter().GetResult();
+            httpRequestMessage.Headers.Authorization =
+                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", _accessToken);
         }
 
-        private async Task RefreshIfExpiredAsync()
+        public async Task AddCredentialToRequestAsync(HttpRequestMessage httpRequestMessage, CancellationToken cancellationToken)
+        {
+            await RefreshIfExpiredAsync(cancellationToken).ConfigureAwait(false);
+            httpRequestMessage.Headers.Authorization =
+                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", _accessToken);
+        }
+
+        private async Task RefreshIfExpiredAsync(CancellationToken cancellationToken)
         {
             // Fast path: token is still valid (30-second buffer before actual expiry).
             if (!string.IsNullOrEmpty(_accessToken) && DateTime.UtcNow < _tokenExpiry.AddSeconds(-30))
                 return;
 
-            await _refreshLock.WaitAsync().ConfigureAwait(false);
+            await _refreshLock.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
                 // Double-check after acquiring the lock.
                 if (string.IsNullOrEmpty(_accessToken) || DateTime.UtcNow >= _tokenExpiry.AddSeconds(-30))
                 {
-                    var tokenResponse = await GetTokenAsync(TokenEndpoint, ClientId, ClientSecret, Scope)
+                    var tokenResponse = await GetTokenAsync(TokenEndpoint, ClientId, ClientSecret, Scope, cancellationToken)
                         .ConfigureAwait(false);
                     _accessToken = tokenResponse.AccessToken;
                     _tokenExpiry = DateTime.UtcNow.AddSeconds(tokenResponse.ExpiresIn);
@@ -73,7 +93,7 @@ namespace Trino.Client.Auth
             }
         }
 
-        private async Task<TokenResponse> GetTokenAsync(string tokenEndpoint, string clientId, string clientSecret, string scope)
+        private async Task<TokenResponse> GetTokenAsync(string tokenEndpoint, string clientId, string clientSecret, string scope, CancellationToken cancellationToken)
         {
             var request = new HttpRequestMessage(HttpMethod.Post, tokenEndpoint)
             {
@@ -86,7 +106,7 @@ namespace Trino.Client.Auth
                 })
             };
 
-            var response = await _sharedHttpClient.SendAsync(request).ConfigureAwait(false);
+            var response = await _sharedHttpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
             response.EnsureSuccessStatusCode();
 
             var content = await response.Content.ReadAsStringAsync().ConfigureAwait(false);

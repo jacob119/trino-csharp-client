@@ -464,8 +464,8 @@ namespace Trino.Client.Test
                             Assert.AreEqual(DateTimeOffset.Parse("2023-04-04 01:02:03 +00:00"), idr.GetValue(22));
                             Assert.AreEqual("timestamp_with_timezone_column6", tableWithSchema.Columns[22].ToString());
 
-                            Assert.AreEqual(typeof(DateTime), idr.GetValue(23).GetType());
-                            Assert.AreEqual(new DateTime(3, 5, 1), idr.GetValue(23));
+                            Assert.AreEqual(typeof(TrinoIntervalYearToMonth), idr.GetValue(23).GetType());
+                            Assert.AreEqual(new TrinoIntervalYearToMonth(3, 5), idr.GetValue(23));
                             Assert.AreEqual("interval_year_to_month_column", tableWithSchema.Columns[23].ToString());
 
                             Assert.AreEqual(typeof(TimeSpan), idr.GetValue(24).GetType());

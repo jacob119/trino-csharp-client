@@ -51,8 +51,10 @@ namespace Trino.Client.Types
         {
             if (obj is TrinoBigDecimal other)
             {
-                AlignScales(ref this, ref other);
-                return integerPart == other.integerPart && fractionalPart == other.fractionalPart;
+                var a = this;
+                var b = other;
+                AlignScales(ref a, ref b);
+                return a.integerPart == b.integerPart && a.fractionalPart == b.fractionalPart;
             }
             return false;
         }

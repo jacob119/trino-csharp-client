@@ -192,9 +192,9 @@ namespace Trino.Data.ADO.Utilities
         /// </summary>
         private static bool TrySetSessionProperty(ClientSessionProperties sessionProperties, string key, object value)
         {
-            if (propertyHandlers.ContainsKey(key.ToLower()))
+            if (propertyHandlers.TryGetValue(key, out var handler))
             {
-                propertyHandlers[key.ToLower()].Deserializer.Invoke(sessionProperties, value.ToString());
+                handler.Deserializer.Invoke(sessionProperties, value.ToString());
                 return true;
             }
             return false;

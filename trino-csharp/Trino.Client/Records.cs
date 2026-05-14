@@ -38,7 +38,7 @@ namespace Trino.Client
         private readonly ILoggerWrapper logger;
         private bool isClosed;
         private int _disposeFlag;
-        private IList<TrinoColumn> columns;
+        private IList<TrinoColumn> columns; // accessed via Volatile.Read/Write
 
         internal Records(ILoggerWrapper logger, Pages pages)
         {
@@ -65,11 +65,11 @@ namespace Trino.Client
         {
             get
             {
-                if (columns == null)
-                {
-                    columns = PopulateColumnsAsync().SafeResult();
-                }
-                return columns;
+                var cols = Volatile.Read(ref columns);
+                if (cols != null) return cols;
+                cols = PopulateColumnsAsync().SafeResult();
+                Volatile.Write(ref columns, cols);
+                return cols;
             }
         }
 
@@ -84,10 +84,13 @@ namespace Trino.Client
 
         public bool MoveNext()
         {
-            return MoveNextAsync().SafeResult();
+            return MoveNextAsync(System.Threading.CancellationToken.None).SafeResult();
         }
 
-        public async Task<bool> MoveNextAsync()
+        Task<bool> IAsyncEnumeratorPlaceholder<List<object>>.MoveNextAsync() =>
+            MoveNextAsync(System.Threading.CancellationToken.None);
+
+        public async Task<bool> MoveNextAsync(System.Threading.CancellationToken cancellationToken = default)
         {
             logger?.LogDebug($"Trino IDataReader: attempt to read row. Page index: {rowIndex}.");
             if (Volatile.Read(ref isClosed))
@@ -99,7 +102,7 @@ namespace Trino.Client
             if (pages.IsEmptyPage || IsAtEndOfPage())
             {
                 // If there is a next page, advance to the first row
-                if (await pages.MoveNextAsync().ConfigureAwait(false) && pages.Current.HasData)
+                if (await pages.MoveNextAsync(cancellationToken).ConfigureAwait(false) && pages.Current.HasData)
                 {
                     logger?.LogDebug($"Trino IDataReader: Start on row 0");
                     rowIndex = 0;

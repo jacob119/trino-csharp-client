@@ -1,11 +1,13 @@
 using System.Net.Http;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace Trino.Client.Auth
 {
     /// <summary>
     /// A credential containing a bearer token
     /// </summary>
-    public class TrinoJWTAuth : ITrinoAuth
+    public class TrinoJWTAuth : ITrinoAuthAsync
     {
         public const string AccessTokenProperty = "AccessToken";
 
@@ -43,6 +45,18 @@ namespace Trino.Client.Auth
             {
                 httpRequestMessage.Headers.Add("Authorization", "Bearer " + AccessToken);
             }
+        }
+
+        public Task AuthorizeAndValidateAsync(CancellationToken cancellationToken)
+        {
+            AuthorizeAndValidate();
+            return Task.CompletedTask;
+        }
+
+        public Task AddCredentialToRequestAsync(HttpRequestMessage httpRequestMessage, CancellationToken cancellationToken)
+        {
+            AddCredentialToRequest(httpRequestMessage);
+            return Task.CompletedTask;
         }
     }
 }

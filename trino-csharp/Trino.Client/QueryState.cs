@@ -15,10 +15,10 @@ namespace Trino.Client
             this.state = (int)TrinoQueryStates.RUNNING;
         }
 
-        public bool IsRunning { get { return this.state == (int)TrinoQueryStates.RUNNING; } }
-        public bool IsClientAborted { get { return this.state == (int)TrinoQueryStates.CLIENT_ABORTED; } }
-        public bool IsClientError { get { return this.state == (int)TrinoQueryStates.CLIENT_ERROR; } }
-        public bool IsFinished { get { return this.state == (int)TrinoQueryStates.FINISHED; } }
+        public bool IsRunning => Volatile.Read(ref state) == (int)TrinoQueryStates.RUNNING;
+        public bool IsClientAborted => Volatile.Read(ref state) == (int)TrinoQueryStates.CLIENT_ABORTED;
+        public bool IsClientError => Volatile.Read(ref state) == (int)TrinoQueryStates.CLIENT_ERROR;
+        public bool IsFinished => Volatile.Read(ref state) == (int)TrinoQueryStates.FINISHED;
 
         public override string ToString()
         {

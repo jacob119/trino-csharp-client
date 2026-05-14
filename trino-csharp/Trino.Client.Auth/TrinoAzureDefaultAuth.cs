@@ -4,10 +4,11 @@ using System.Threading;
 using System.Threading.Tasks;
 using Azure.Core;
 using Azure.Identity;
+using Trino.Client.Auth;
 
 namespace Trino.Client.Auth
 {
-    public class TrinoAzureDefaultAuth : ITrinoAuth, IDisposable
+    public class TrinoAzureDefaultAuth : ITrinoAuthAsync, IDisposable
     {
         private readonly DefaultAzureCredential _credential;
         private readonly string _scope;
@@ -19,46 +20,58 @@ namespace Trino.Client.Auth
         {
             _credential = new DefaultAzureCredential();
             _scope = scope;
-            _accessToken = GetTokenAsync().GetAwaiter().GetResult();
+            // Token is fetched lazily on first use to avoid blocking in the constructor.
         }
 
         public void AuthorizeAndValidate()
         {
-            RefreshIfExpiredAsync().GetAwaiter().GetResult();
+            // Validate config only; token fetch deferred to async path.
+            if (string.IsNullOrEmpty(_scope))
+                throw new InvalidOperationException("TrinoAzureDefaultAuth: scope is required.");
+        }
+
+        public async Task AuthorizeAndValidateAsync(CancellationToken cancellationToken)
+        {
+            if (string.IsNullOrEmpty(_scope))
+                throw new InvalidOperationException("TrinoAzureDefaultAuth: scope is required.");
+            await RefreshIfExpiredAsync(cancellationToken).ConfigureAwait(false);
         }
 
         public void AddCredentialToRequest(HttpRequestMessage httpRequestMessage)
         {
-            RefreshIfExpiredAsync().GetAwaiter().GetResult();
+            if (_accessToken.ExpiresOn <= DateTimeOffset.UtcNow.AddSeconds(30))
+                RefreshIfExpiredAsync(CancellationToken.None).ConfigureAwait(false).GetAwaiter().GetResult();
             httpRequestMessage.Headers.Authorization =
                 new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", _accessToken.Token);
         }
 
-        private async Task RefreshIfExpiredAsync()
+        public async Task AddCredentialToRequestAsync(HttpRequestMessage httpRequestMessage, CancellationToken cancellationToken)
+        {
+            await RefreshIfExpiredAsync(cancellationToken).ConfigureAwait(false);
+            httpRequestMessage.Headers.Authorization =
+                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", _accessToken.Token);
+        }
+
+        private async Task RefreshIfExpiredAsync(CancellationToken cancellationToken)
         {
             if (_accessToken.ExpiresOn > DateTimeOffset.UtcNow.AddSeconds(30))
                 return;
 
-            await _refreshLock.WaitAsync().ConfigureAwait(false);
+            await _refreshLock.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
                 // double-check after acquiring the lock
                 if (_accessToken.ExpiresOn <= DateTimeOffset.UtcNow.AddSeconds(30))
                 {
-                    _accessToken = await GetTokenAsync().ConfigureAwait(false);
+                    _accessToken = await _credential.GetTokenAsync(
+                        new TokenRequestContext(new[] { _scope }),
+                        cancellationToken).ConfigureAwait(false);
                 }
             }
             finally
             {
                 _refreshLock.Release();
             }
-        }
-
-        private async Task<AccessToken> GetTokenAsync()
-        {
-            return await _credential.GetTokenAsync(
-                new TokenRequestContext(new[] { _scope }),
-                CancellationToken.None).ConfigureAwait(false);
         }
 
         public void Dispose()

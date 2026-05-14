@@ -18,6 +18,7 @@ namespace Trino.Client
         // BlockingCollection offers no advantage over ConcurrentQueue for this use case.
         private readonly ConcurrentQueue<ResponseQueueStatement> responseQueue = new ConcurrentQueue<ResponseQueueStatement>();
         private readonly ConcurrentBag<Exception> errors = new ConcurrentBag<Exception>();
+        private volatile bool _hasErrors;
 
         // The actual buffer size
         private readonly long bufferSize;
@@ -34,7 +35,7 @@ namespace Trino.Client
         // backoff for checking the queue for new pages, values tuned 2024
         private const int maxWaitForQueueTimeoutMsec = 10000;
         private const int queueCheckBackoff = 100;
-        private int waitForQueueTimeoutMsec = 50;
+        private volatile int waitForQueueTimeoutMsec = 50;
         private Task readAhead;
 
         internal PageQueue(ILoggerWrapper logger, IList<Action<TrinoStats, TrinoError>> queryStatusNotifications, StatementClientV1 client, long bufferSize, bool isQuery, CancellationToken cancellationToken = default)
@@ -170,6 +171,7 @@ namespace Trino.Client
             {
                 logger?.LogError("Trino Query Executor: {0}", ex.ToString());
                 errors.Add(ex);
+                _hasErrors = true;
                 if (ex is TrinoException exception)
                 {
                     PublishStatus(this.LastStatement?.stats, exception.Error);
@@ -186,6 +188,7 @@ namespace Trino.Client
             {
                 logger?.LogDebug("Trino Query Executor: query cancelled.");
                 errors.Add(new OperationCanceledException("Query cancelled"));
+                _hasErrors = true;
                 return true;
             }
 
@@ -193,12 +196,13 @@ namespace Trino.Client
             {
                 logger?.LogDebug("Trino Query Executor: terminating due to timeout.");
                 errors.Add(new TimeoutException("Query timed out"));
+                _hasErrors = true;
                 return true;
             }
 
-            if (errors.Count > 0)
+            if (_hasErrors)
             {
-                logger?.LogDebug("Trino Query Executor: terminating due to exceptions: {0} ", string.Join(",", errors.Select(e => e.ToString())));
+                logger?.LogDebug("Trino Query Executor: terminating due to exceptions.");
                 return true;
             }
 
@@ -251,7 +255,7 @@ namespace Trino.Client
         /// </summary>
         internal void ThrowIfErrors()
         {
-            if (!errors.Any()) return;
+            if (!_hasErrors) return;
 
             foreach (var ex in errors)
             {
@@ -265,19 +269,22 @@ namespace Trino.Client
         /// Attempt to dequeue the next available page. Poses an exponential backoff if result is not found.
         /// </summary>
         /// <returns>The next page, or null, if not available</returns>
-        internal async Task<ResponseQueueStatement> DequeueOrNull()
+        internal async Task<ResponseQueueStatement> DequeueOrNull(CancellationToken cancellationToken = default)
         {
             if (!this.responseQueue.TryDequeue(out ResponseQueueStatement response))
             {
                 // wait for signal of next dequeue
-                if (!(await signalUpdatedQueue.WaitAsync(waitForQueueTimeoutMsec).ConfigureAwait(false)))
+                bool signalled = await signalUpdatedQueue.WaitAsync(waitForQueueTimeoutMsec, cancellationToken).ConfigureAwait(false);
+                if (!signalled)
                 {
-                    // ensure readahead is running if there is nothing to dequeue
-                    // backoff wait time because aggressive checks only benefit short running queries, and the signal covers most cases
+                    // backoff wait time; signal covers most cases, aggressive polling only helps short-running queries
                     waitForQueueTimeoutMsec = Math.Min(waitForQueueTimeoutMsec + queueCheckBackoff, maxWaitForQueueTimeoutMsec);
                 }
+                // Retry once after signal (or timeout) — signal may have fired between TryDequeue and WaitAsync
+                this.responseQueue.TryDequeue(out response);
             }
-            else
+
+            if (response != null)
             {
                 Interlocked.Add(ref currentQueueBytes, -response.SizeBytes);
             }

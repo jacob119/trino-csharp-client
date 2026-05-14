@@ -75,7 +75,10 @@ namespace Trino.Client
             bool isQuery,
             CancellationToken cancellationToken)
         {
-            session.Auth?.AuthorizeAndValidate();
+            if (session.Auth is Auth.ITrinoAuthAsync asyncAuth)
+                await asyncAuth.AuthorizeAndValidateAsync(cancellationToken).ConfigureAwait(false);
+            else
+                session.Auth?.AuthorizeAndValidate();
 
             StatementClientV1 statementClient = new StatementClientV1(session, cancellationToken, logger);
             logger?.LogInformation("Trino: Created client, starting query: {0}", statement);

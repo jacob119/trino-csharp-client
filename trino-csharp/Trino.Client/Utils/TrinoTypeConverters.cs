@@ -120,7 +120,7 @@ namespace Trino.Client.Utils
 
         private static object ConvertToTrinoTypeFromJson(object value, string trinoType, string baseType, string typeParameters)
         {
-            switch (baseType.ToLowerInvariant())
+            switch (baseType)
             {
                 case TRINO_BIGINT:
                     return value;
@@ -151,11 +151,13 @@ namespace Trino.Client.Utils
                 case TRINO_TIMESTAMP_WITH_TIME_ZONE:
                     return ParseTimestampWithTimezone(value.ToString());
                 case TRINO_INTERVAL_YEAR_TO_MONTH:
-                    int separator = value.ToString().IndexOf('-');
-                    int years = Convert.ToInt32(value.ToString().Substring(0, separator));
-                    int months = Convert.ToInt32(value.ToString().Substring(separator + 1));
-                    // DateTime year/month must be >= 1; clamp so "N-0" or "0-M" don't throw.
-                    return new DateTime(Math.Max(1, years), Math.Max(1, months), 1);
+                {
+                    string raw = value.ToString();
+                    int sep = raw.IndexOf('-');
+                    return new TrinoIntervalYearToMonth(
+                        Convert.ToInt32(raw.Substring(0, sep)),
+                        Convert.ToInt32(raw.Substring(sep + 1)));
+                }
                 case TRINO_INTERVAL_DAY_TO_SECOND:
                     int dayToTimeSeparator = value.ToString().IndexOf(' ');
                     int days = Convert.ToInt32(value.ToString().Substring(0, dayToTimeSeparator));
@@ -250,9 +252,11 @@ namespace Trino.Client.Utils
         {
             int typeParametersIndex = trinoType.IndexOf("(");
             int typeParametersIndexEnd = trinoType.LastIndexOf(")");
-            baseType = typeParametersIndex != -1 && typeParametersIndexEnd != -1
+            string raw = typeParametersIndex != -1 && typeParametersIndexEnd != -1
                 ? trinoType.Substring(0, typeParametersIndex) + trinoType.Substring(typeParametersIndexEnd + 1, trinoType.Length - typeParametersIndexEnd - 1)
                 : trinoType;
+            // Normalize once here so switch statements don't need per-call ToLowerInvariant.
+            baseType = raw.ToLowerInvariant().Trim();
             typeParameters = typeParametersIndex != -1 ? trinoType.Substring(typeParametersIndex + 1, typeParametersIndexEnd - typeParametersIndex - 1) : null;
         }
 
@@ -260,7 +264,7 @@ namespace Trino.Client.Utils
         {
             GetNestedTypes(trinoType.type, out string baseType, out string typeParameters);
 
-            switch (baseType.ToLowerInvariant())
+            switch (baseType)
             {
                 case TRINO_BIGINT:
                     return typeof(long);
@@ -281,8 +285,9 @@ namespace Trino.Client.Utils
                 case TRINO_NUMBER:
                     return typeof(string);
                 case TRINO_DATE:
-                case TRINO_INTERVAL_YEAR_TO_MONTH:
                     return typeof(DateTime);
+                case TRINO_INTERVAL_YEAR_TO_MONTH:
+                    return typeof(TrinoIntervalYearToMonth);
                 case TRINO_TIME:
                 case TRINO_INTERVAL_DAY_TO_SECOND:
                     return typeof(TimeSpan);
@@ -383,9 +388,7 @@ namespace Trino.Client.Utils
                 }
 
                 Dictionary<object, object> map = new Dictionary<object, object>();
-                string[] types = typeParameters.Split(',');
-                string keyType = types[0].Trim();
-                string valueType = types[1].Trim();
+                SplitTopLevelComma(typeParameters, out string keyType, out string valueType);
                 foreach (KeyValuePair<string, JToken> item in (JObject)value)
                 {
                     map.Add(ConvertToTrinoTypeFromJson(item.Key, keyType), ConvertToTrinoTypeFromJson(item.Value, valueType));
@@ -426,6 +429,28 @@ namespace Trino.Client.Utils
             {
                 throw new TrinoException("Unknown complex type: " + baseType);
             }
+        }
+
+        /// <summary>
+        /// Splits "keyType, valueType" at the first top-level comma,
+        /// correctly handling nested types like "row(a integer, b varchar), varchar".
+        /// </summary>
+        private static void SplitTopLevelComma(string typeParameters, out string first, out string second)
+        {
+            int depth = 0;
+            for (int i = 0; i < typeParameters.Length; i++)
+            {
+                char c = typeParameters[i];
+                if (c == '(') depth++;
+                else if (c == ')') depth--;
+                else if (c == ',' && depth == 0)
+                {
+                    first = typeParameters.Substring(0, i).Trim();
+                    second = typeParameters.Substring(i + 1).Trim();
+                    return;
+                }
+            }
+            throw new TrinoException($"Map type parameters must have exactly two type arguments separated by a comma: {typeParameters}");
         }
     }
 }
