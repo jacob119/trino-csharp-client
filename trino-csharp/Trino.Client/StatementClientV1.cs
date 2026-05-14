@@ -18,8 +18,6 @@ using System.Net.Security;
 using System.Security.Cryptography.X509Certificates;
 using System.Threading;
 using System.Threading.Tasks;
-using System.Web;
-
 using static Trino.Client.QueryState;
 
 namespace Trino.Client
@@ -418,7 +416,7 @@ namespace Trino.Client
                 {
                     continue;
                 }
-                this.sessionSet.SetSessionProperties[keyValue[0]] = HttpUtility.UrlDecode(keyValue[1]);
+                this.sessionSet.SetSessionProperties[keyValue[0]] = WebUtility.UrlDecode(keyValue[1]);
             }
 
             foreach (string sessionKey in headers.GetValuesOrEmpty(protocolHeaders.ResponseClearSession))
@@ -434,7 +432,7 @@ namespace Trino.Client
                 string[] keyValue = role.Split(new char[] { '=' }, 2);
                 if (keyValue.Length == 2)
                 {
-                    this.sessionSet.SetRoles[keyValue[0]] = ClientSelectedRole.Parse(HttpUtility.UrlDecode(keyValue[1]));
+                    this.sessionSet.SetRoles[keyValue[0]] = ClientSelectedRole.Parse(WebUtility.UrlDecode(keyValue[1]));
                 }
             }
 
@@ -470,7 +468,7 @@ namespace Trino.Client
                 {
                     throw new TrinoException("Invalid response header. Expecting key=value: " + protocolHeaders.ResponseAddedPrepare + ": " + preparedStatement);
                 }
-                string value = HttpUtility.UrlDecode(keyValue[1]);
+                string value = WebUtility.UrlDecode(keyValue[1]);
                 this.sessionSet.ResponseAddedPrepare.Add(keyValue[0], value);
             }
 
@@ -481,7 +479,7 @@ namespace Trino.Client
                 {
                     throw new TrinoException("Invalid response header. Expecting key=value: " + protocolHeaders.ResponseDeallocatedPrepare + ": " + deallocateStatement);
                 }
-                string value = HttpUtility.UrlDecode(keyValue[1]);
+                string value = WebUtility.UrlDecode(keyValue[1]);
                 this.sessionSet.ResponseDeallocatedPrepare.Add(keyValue[0], value);
             }
         }
@@ -547,37 +545,37 @@ namespace Trino.Client
             Dictionary<string, string> property = Session.Properties.Properties;
             foreach (KeyValuePair<string, String> pair in property)
             {
-                request.Headers.Add(protocolHeaders.RequestSession, $"{pair.Key}={HttpUtility.UrlEncode(pair.Value)}");
+                request.Headers.Add(protocolHeaders.RequestSession, $"{pair.Key}={WebUtility.UrlEncode(pair.Value)}");
             }
 
             Dictionary<string, string> resourceEstimates = Session.Properties.ResourceEstimates;
             foreach (KeyValuePair<string, String> pair in resourceEstimates)
             {
-                request.Headers.Add(protocolHeaders.RequestResourceEstimate, $"{pair.Key}={HttpUtility.UrlEncode(pair.Value)}");
+                request.Headers.Add(protocolHeaders.RequestResourceEstimate, $"{pair.Key}={WebUtility.UrlEncode(pair.Value)}");
             }
 
             Dictionary<string, ClientSelectedRole> roles = Session.Properties.Roles;
             foreach (KeyValuePair<string, ClientSelectedRole> pair in roles)
             {
-                request.Headers.Add(protocolHeaders.RequestRole, $"{pair.Key}={HttpUtility.UrlEncode(pair.Value.ToString())}");
+                request.Headers.Add(protocolHeaders.RequestRole, $"{pair.Key}={WebUtility.UrlEncode(pair.Value.ToString())}");
             }
 
             Dictionary<string, string> extraCredentials = Session.Properties.ExtraCredentials;
             foreach (KeyValuePair<string, string> pair in extraCredentials)
             {
-                request.Headers.Add(protocolHeaders.RequestExtraCredential, $"{pair.Key}={HttpUtility.UrlEncode(pair.Value.ToString())}");
+                request.Headers.Add(protocolHeaders.RequestExtraCredential, $"{pair.Key}={WebUtility.UrlEncode(pair.Value.ToString())}");
             }
 
             foreach (KeyValuePair<string, string> pair in Session.Properties.PreparedStatements)
             {
-                request.Headers.Add(protocolHeaders.RequestPreparedStatement, $"{pair.Key}={HttpUtility.UrlEncode(pair.Value.ToString())}");
+                request.Headers.Add(protocolHeaders.RequestPreparedStatement, $"{pair.Key}={WebUtility.UrlEncode(pair.Value.ToString())}");
             }
 
             if (additionalPreparedStatements != null)
             {
                 foreach (KeyValuePair<string, string> pair in additionalPreparedStatements)
                 {
-                    request.Headers.Add(protocolHeaders.RequestPreparedStatement, $"{pair.Key}={HttpUtility.UrlEncode(pair.Value.ToString())}");
+                    request.Headers.Add(protocolHeaders.RequestPreparedStatement, $"{pair.Key}={WebUtility.UrlEncode(pair.Value.ToString())}");
                 }
             }
 
