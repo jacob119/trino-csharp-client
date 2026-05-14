@@ -77,7 +77,7 @@ namespace Trino.Client
         {
             if (Interlocked.Exchange(ref _disposeFlag, 1) == 0)
             {
-                isClosed = true;
+                Volatile.Write(ref isClosed, true);
                 pages.Dispose();
             }
         }
@@ -90,7 +90,7 @@ namespace Trino.Client
         public async Task<bool> MoveNextAsync()
         {
             logger?.LogDebug($"Trino IDataReader: attempt to read row. Page index: {rowIndex}.");
-            if (isClosed)
+            if (Volatile.Read(ref isClosed))
             {
                 throw new TrinoException("Reading a stream that is already closed");
             }
@@ -113,7 +113,7 @@ namespace Trino.Client
                 else if (pages.IsFinished())
                 {
                     logger?.LogDebug($"Trino IDataReader: No more pages");
-                    isClosed = true;
+                    Volatile.Write(ref isClosed, true);
                     return false;
                 }
                 else
@@ -127,8 +127,8 @@ namespace Trino.Client
                 if (forceLimitOne)
                 {
                     logger?.LogInformation($"Trino IDataReader: Force limit one row");
+                    Volatile.Write(ref isClosed, true);
                     pages.Dispose();
-                    isClosed = true;
                     return false;
                 }
 
@@ -201,26 +201,24 @@ namespace Trino.Client
 
         private T CastWithNullCheck<T>(int colIndex, object o, bool allowNull)
         {
-            if (o == null && !allowNull)
+            if (o == null)
             {
-                throw new NullReferenceException($"Value in column {colIndex} of type `{this.Columns[colIndex].type}` is null, and requested type `{typeof(T).Name}` is not nullable.");
+                if (!allowNull)
+                    throw new NullReferenceException($"Value in column {colIndex} of type `{this.Columns[colIndex].type}` is null, and requested type `{typeof(T).Name}` is not nullable.");
+                return default;
             }
+
+            // Pattern-match avoids throwing InvalidCastException on every type mismatch.
+            if (o is T direct)
+                return direct;
+
             try
             {
-                // Direct cast if possible
-                return (T)o;
+                return (T)Convert.ChangeType(o, typeof(T));
             }
-            catch (InvalidCastException)
+            catch (Exception ex) when (ex is InvalidCastException || ex is FormatException || ex is OverflowException)
             {
-                // Attempt to convert if direct cast fails
-                try
-                {
-                    return (T)Convert.ChangeType(o, typeof(T));
-                }
-                catch (InvalidCastException)
-                {
-                    throw new InvalidCastException($"Cannot cast or convert object of type `{o.GetType()}` to type `{typeof(T)}`.");
-                }
+                throw new InvalidCastException($"Cannot cast or convert object of type `{o.GetType()}` to type `{typeof(T)}`.");
             }
         }
 
