@@ -1,17 +1,17 @@
 # Trino C# Client
 
+A streaming C# Trino client library with full ADO.NET interfaces, compatible with **Trino 478+**.
+
 ## Introduction
 
-A streaming C# Trino client library with ADO.NET interfaces. The priorties for this library are:
+This library provides a high-performance, protocol-complete C# client for [Trino](https://trino.io/). Key priorities:
 
-* Response performance (fast return of rows for both short and long running queries).
-* Type support in .NET (with complex types, date time precision) and System.Data types.
-* Authentication which is customizable and flexible (to support arbitrary custom token refresh, or unique cloud requirements).
-* Full ADO.NET implementation.
-* Streaming with read-ahead into customizable buffer size to allow for no-wait client paging.
-* Session support, parameterized query support.
-* No dependencies outside of .NET core except Newtonsoft.Json and Microsoft.Extensions.Logging. Authentication in separate library.
-* Alignment with Trino Java client, similar class structure.
+- **Performance** — streaming read-ahead with configurable buffer; fast first-row latency for both short metadata queries and long-running analytical queries.
+- **Type fidelity** — precise mapping of all Trino types (timestamps with time zone, interval, decimal, complex types) to idiomatic .NET types.
+- **Full protocol coverage** — all headers from `ProtocolHeaders.java` (Trino 478+) are implemented, including transaction management, role updates, session clear/set, and impersonation.
+- **Flexible authentication** — pluggable `ITrinoAuth` interface with built-in JWT, Basic/LDAP, OAuth 2.0 client credentials, and Azure Default Credential providers.
+- **ADO.NET compliance** — `DbConnection`, `DbCommand`, `IDataReader`, `DataTable`, connection string, schema discovery.
+- **Minimal dependencies** — only `Newtonsoft.Json` and `Microsoft.Extensions.Logging` outside .NET core; authentication in a separate assembly.
 
 ## Resources
 
@@ -21,28 +21,46 @@ Project introduction at Trino Summit 2024 by George Fischer
 
 [Presentation deck](docs/assets/trino-summit-2024-csharp-client.pdf)
 
-## Libraries
+---
 
-These are the libraries that make up the client:
+## Project Structure
 
-|Library|Description|Compatibility|Notes|
-|-|-|-|-|
-|Trino.Client|Trino .NET SDK|.NET Standard 2.0|Core client library providing direct access to Trino protocols. Handles session management, query execution, and result streaming.|
-|Trino.Data.ADO|Trino ADO.NET client|.NET Standard 2.0|ADO.NET wrapper implementing DbConnection, DbCommand, and IDataReader. Provides familiar database access patterns and schema discovery functionality.|
-|Trino.Client.Auth|Authentication providers|.NET Standard 2.0|Suthentication implementations in a separate package to avoid dependency conflicts.|
+```
+trino-csharp/
+├── Trino.Client/                   # Core SDK (.NET Standard 2.0)
+├── Trino.Data.ADO/                 # ADO.NET wrapper (.NET Standard 2.0)
+├── Trino.Client.Auth/              # Authentication providers (.NET Standard 2.0)
+├── Trino.Client.Test/              # Unit tests (38 tests, mock HTTP server)
+├── Trino.Integration.Test/         # Integration tests against a real Trino cluster
+└── Trino.Platform.Samples/         # Usage examples and sample programs
+```
 
-> [!NOTE]
-> .NET standard 2.0 provides compatibility with .NET Framework 4.7.2 which is widely used.
-> Design note: IAsyncEnumerable is not available in .NET Standard 2.0 but due to asynchronous read-ahead you do not need to await reading every row.
+### Libraries
+
+| Library | Description | Target | Notes |
+|---|---|---|---|
+| `Trino.Client` | Core Trino SDK | .NET Standard 2.0 | Protocol, session management, query execution, result streaming |
+| `Trino.Data.ADO` | ADO.NET wrapper | .NET Standard 2.0 | `DbConnection`, `DbCommand`, `IDataReader`, schema discovery |
+| `Trino.Client.Auth` | Authentication providers | .NET Standard 2.0 | Separate package to avoid dependency conflicts |
+| `Trino.Integration.Test` | Integration test runner | .NET 10 | 11 live tests against Trino cluster |
+| `Trino.Platform.Samples` | Sample programs | .NET 10 | 10 example patterns with `appsettings.json` config |
+| `Trino.Platform.Samples.Tests` | Sample integration tests | .NET 10 | xUnit tests for HTTP client samples |
+
+> **Note:** .NET Standard 2.0 provides compatibility with .NET Framework 4.7.2+.
+> `IAsyncEnumerable` is not available in .NET Standard 2.0 but the async read-ahead buffer means you do not need to await every row.
+
+---
 
 ## Building
 
 ### Command Line
 
-1. Install .NET SDK latest version from <https://dotnet.microsoft.com/en-us/download>
-2. From the root folder of the project, run `msbuild TrinoDriver.sln`
+```bash
+# Install .NET SDK from https://dotnet.microsoft.com/en-us/download
+dotnet build trino-csharp/TrinoDriver.sln
+```
 
-To make the nuget packages:
+### NuGet Packages
 
 ```cmd
 nuget pack Trino.Client\Trino.Client.nuspec -Version 1.0.0
@@ -52,366 +70,527 @@ nuget pack Trino.Client.Auth\Trino.Client.Auth.nuspec -Version 1.0.0
 
 ### Visual Studio
 
-In Visual Studio, open TrinoDriver.sln and build.
+Open `trino-csharp/TrinoDriver.sln` and build.
 
-### Visual Studio Code
+---
 
-1. Install .NET SDK latest version from <https://dotnet.microsoft.com/en-us/download>
-2. Install the C# extension for VS Code
-3. Open the project folder in VS Code
-4. Select a build configuration using the .NET: Select Project command
-5. Build using Terminal > Run Build Task or `dotnet build TrinoDriver.sln`
+## Quick Start
 
-
-## Usage Examples
-
-The client library provides two ways to interact with Trino:
-
-1. ADO.NET Interface (Recommended for .NET applications) - Provides standardized database access through familiar ADO.NET abstractions (DbConnection, DbCommand, IDataReader). Use this if you want code that's consistent with other database providers or need to work with existing ADO.NET-based tools and frameworks. See the [ADO.NET Connection](#adonet-connection) section for detailed configuration options.
-
-2. Trino SDK - Direct access to Trino functionality through a lightweight client implementation. This approach offers more fine-grained control and aligns closely with other Trino client implementations.
-
-### Quick Start Using ADO.NET
+### ADO.NET (Recommended)
 
 ```csharp
-TrinoConnectionProperties properties = new TrinoConnectionProperties()
+var properties = new TrinoConnectionProperties
 {
     Catalog = "tpch",
-    Server = new Uri("https://trino.myhost.net/"),
-    Auth = new TrinoJWTAuth(token: "...")
+    Server  = new Uri("https://trino.example.com/"),
+    Auth    = new TrinoJWTAuth(token: "your-token")
 };
 
-using (TrinoConnection connection = new TrinoConnection(properties))
+using var connection = new TrinoConnection(properties);
+using var command    = new TrinoCommand(connection, "SELECT * FROM tpch.tiny.customer LIMIT 5");
+using var reader     = command.ExecuteReader();
+
+while (reader.Read())
 {
-    using (IDbCommand command = new TrinoCommand(connection, "SELECT * FROM tpch.tiny.customer LIMIT 5"))
-    using (IDataReader reader = command.ExecuteReader())
-    {
-        while (reader.Read())
-        {
-            for (int i = 0; i < reader.FieldCount; i++)
-            {
-                Console.WriteLine($"{reader.GetName(i)} -> {reader.GetDataTypeName(i)} : {reader.GetValue(i)}");
-            }
-        }
-    }
+    for (int i = 0; i < reader.FieldCount; i++)
+        Console.WriteLine($"{reader.GetName(i)}: {reader.GetValue(i)}");
 }
-
-### Quick Start Using Trino SDK
-
-#### Basic Query Execution
-
-```csharp
-// Create a session with default settings
-ClientSession session = new ClientSession(
-    sessionProperties: new ClientSessionProperties()
-    {
-        Server = new Uri("http://localhost:8080/")
-    });
-
-// Execute query and read results into a DataTable
-DataTable dt = await(
-    await RecordExecutor.Execute(
-        session: session,
-        statement: "select * from tpch.tiny.customer"
-        ).ConfigureAwait(false)
-    ).BuildDataTableAsync().ConfigureAwait(false);
-Console.WriteLine($"Read {dt.Rows.Count} rows");
 ```
 
-#### Row-by-Row Processing
+### Trino SDK (Direct)
 
 ```csharp
-RecordExecutor records = await RecordExecutor.Execute(
-        session: session,
-        statement: "select * from tpch.tiny.customer"
-        ).ConfigureAwait(false);
+var session = new ClientSession(new ClientSessionProperties
+{
+    Server = new Uri("http://localhost:8080/")
+});
 
-// Results stream automatically with configurable buffer
+var records = await RecordExecutor.Execute(
+    session:   session,
+    statement: "SELECT * FROM tpch.tiny.customer"
+).ConfigureAwait(false);
+
 foreach (var row in records)
-{
-    Console.WriteLine(string.Join(",", row));
-}
+    Console.WriteLine(string.Join(", ", row));
 ```
 
-#### Advanced SDK Features
-
-For more complex scenarios, the SDK provides direct access to Trino features:
+### HTTP Client (Lightweight)
 
 ```csharp
-ITrinoAuth auth = new TrinoJWTAuth() { AccessToken = "token" };
-
-ClientSession session = new TrinoConnectionProperties()
+var client = new TrinoHttpClient(new TrinoHttpClientOptions
 {
-    Catalog = "tpch",
-    Server = new Uri("https://trino.myhost.net/"),
-    Auth = auth,
-    SessionProperties = new Dictionary<string, string>() 
-    { 
-        { "dictionary_aggregation", "false" } 
-    }
-}.GetSession();
+    Host = "localhost",
+    Port = 8081
+});
 
-RecordExecutor records = await RecordExecutor.Execute(
-    logger: null, // optional detailed logging
-    queryStatusNotifications: [(stats, error) => 
-    { 
-        Console.WriteLine($"Processed rows: {stats.processedRows}"); 
-    }], // Output statistics to console as query runs
-    session: session,
-    statement: "select * from tpch.tiny.customer where custkey = ?",
-    queryParameters: new List<QueryParameter>() { new(751) },
-    bufferSize: 1024 * 1024 * 5, // 5 MB
-    isQuery: true,
-    CancellationToken.None).ConfigureAwait(false);
-
-DataTable dt = await records.BuildDataTableAsync().ConfigureAwait(false);
-Console.WriteLine("Data table created with rows: " + dt.Rows.Count);
+await foreach (var row in client.ExecuteQueryStreamingAsync("SELECT 1"))
+    Console.WriteLine(row[0]);
 ```
+
+---
 
 ## ADO.NET Connection
 
-The ADO.NET implementation provides standard DbConnection, DbCommand, and DataReader interfaces for Trino. This allows you to use Trino with existing ADO.NET-based tools and patterns.
-
-### Connection Properties
-
-When establishing an ADO.NET connection you declare your connection using the `TrinoConnectionProperties` object which can be serialized into a query string and can be set using a query string. Example:
+### Connection via Properties
 
 ```csharp
-TrinoConnectionProperties properties = new TrinoConnectionProperties()
+var properties = new TrinoConnectionProperties
 {
-    Server = new Uri("https://trino.myhost.net/"),
-    Auth = new TrinoJWTAuth(token: "...")
+    Host      = "trino.example.com",
+    Port      = 443,
+    EnableSsl = true,
+    Catalog   = "tpch",
+    Schema    = "tiny",
+    User      = "myuser",
+    Auth      = new TrinoJWTAuth(token: "...")
 };
+
+using var connection = new TrinoConnection(properties);
 ```
 
-or
+### Connection via Connection String
 
 ```csharp
-TrinoConnectionProperties properties = new TrinoConnectionProperties()
-{
-    Server = new Uri("http://localhost:8080/")
-};
+using var connection = new TrinoConnection();
+connection.ConnectionString =
+    "host=trino.example.com;port=443;catalog=tpch;schema=tiny;" +
+    "user=myuser;auth=TrinoJWTAuth;accessToken=my-token;enableSsl=true";
 ```
 
-### Connection String
+### All Connection Properties
 
-The Trino ADO.NET library supports connection strings. The connection string is expressed as semicolon delimetered assignments. The server name needs to be broken down into `host`, `port`, and `enablessl` properties.
+| Property | Description | Default | Connection String Key |
+|---|---|---|---|
+| `Host` | Trino cluster hostname | — | `host` |
+| `Port` | Trino cluster port | `443` | `port` |
+| `EnableSsl` | Use HTTPS | `true` | `enableSsl` |
+| `HostPath` | URL path prefix | — | `path` |
+| `Catalog` | Default catalog | — | `catalog` |
+| `Schema` | Default schema | — | `schema` |
+| `User` | Connecting user | — | `user` |
+| `AuthorizationUser` | User to impersonate (`X-Trino-Authorization-User`) | — | — |
+| `OriginalUser` | Original end-user for proxy/gateway scenarios | — | — |
+| `OriginalRoles` | Original user roles for proxy scenarios | — | — |
+| `Auth` | Auth provider (`ITrinoAuth`) | `null` | `auth=ClassName;...` |
+| `ServerType` | Protocol header prefix (`Trino` or `Presto`) | `Trino` | `serverType` |
+| `AdditionalHeaders` | Extra HTTP headers | — | — |
+| `Roles` | Per-catalog role selection | — | — |
+| `SessionProperties` | Initial session properties | — | `properties=k:v,...` |
+| `ClientTags` | Query classification tags | — | `clienttags=a,b` |
+| `ClientInfo` | Client application description | — | — |
+| `Source` | Client source identifier | `.NET Trino Client` | `source` |
+| `TraceToken` | Distributed trace token | — | `tracetoken` |
+| `TimeZone` | Query processing timezone (Java ZoneId format) | — | `timezone` |
+| `CompressionDisabled` | Disable GZip compression | `false` | `compressiondisabled` |
+| `Timeout` | Query execution timeout | — | — |
+| `TestConnection` | Test connection on `Open()` | `false` | `testconnection` |
+| `AllowHostNameCNMismatch` | Ignore TLS hostname mismatch | `false` | `AllowHostNameCNMismatch` |
+| `AllowSelfSignedServerCert` | Accept self-signed TLS certificates | `false` | `AllowSelfSignedServerCert` |
+| `TrustedCertPath` | Path to trusted PEM certificate file | — | — |
+| `TrustedCertificate` | Embedded PEM certificate string | — | — |
+| `UseSystemTrustStore` | Use OS certificate store | `false` | — |
 
-> [!NOTE] Any auth class used in the connections string must be in a loaded assembly. If you have a custom authenticator it must be in a loaded assembly in order to be discovered.
-
-Example connection using a connection string:
-
-```csharp
-using (TrinoConnection tc = new TrinoConnection())
-{
-    tc.ConnectionString = $"catalog=delta;schema=nyc;host={demoClusterHost};auth=TrinoJWTAuth;AccessToken={token}";
-    using (IDbCommand trinoCommand = new TrinoCommand(tc, all_types, TimeSpan.MaxValue, null, logger))
-    {
-        IDataReader idr = trinoCommand.ExecuteReader();
-        while (idr.Read())
-        {
-            // consume data
-        }
-    }
-}
-```
-
-### Session Management
-
-The connection maintains session properties that affect query execution. These can be set through properties or SQL commands:
-
-```csharp
-using (TrinoConnection connection = new TrinoConnection(properties))
-{
-    // Direct property setting
-    connection.ConnectionSession.Properties.Properties["query_max_memory"] = "1GB";
-    
-    // Using SQL commands
-    using (IDbCommand command = new TrinoCommand(connection, "SET SESSION query_max_memory = '2GB'"))
-    {
-        command.ExecuteNonQuery();
-    }
-}
-```
-
-### Connection String/TrinoConnectionProperties
-
-|Property|Description|Example Connection Property|Example Connection String|
-|-|-|-|-|
-|AdditionalHeaders|Key value pairs to be sent to the Trino endpoint.|`new Dictionary<string, string>() {{"key", "value"}}`|n/a|
-|AllowHostNameCNMismatch|Allows the hostname not to match the Common Name (CN) or Subject Alternative Name (SAN) listed on the certificate|false|`AllowHostNameCNMismatch=false`|
-|AllowSelfSignedServerCert|The server’s SSL/TLS certificate does not need to be issued by a trusted Certificate Authority (CA) and can be self-signed instead.|false|`AllowSelfSignedServerCert=false`|
-|Auth|Authentication method. Must implement ITrinoAuth. See [Authentication](#authentication).|new TrinoAzureDefaultAuth(scope: "https://1c9dee158a58484e87f84fb40997b520/.default")|`auth=TrinoJWTAuth;accessToken=token;`|
-|Catalog|Trino default catalog|`catalog=tpch`|
-|ClientTags|A list of tags associated with the client|`new List<string>() {"tag1", "tag2"}`|`clienttags=tag1,tag2`|
-|CompressionDisabled|Disables compressed communication between Trino and the client.|false|`compressiondisabled=true`|
-|Host|Trino cluster hostname.|trino.myhost.net|`host=host.trino.com`|
-|Port|Trino cluster port. Default 443.|443|`port=443`|
-|Path|Trino cluster path. Default unset.|my/host/path|`path=my/host/path`|
-|EnableSsl|If https should be enabled. Default https.|https|`enableSsl=true`|
-|Roles|Authorization roles to use for catalogs, specified as a list of key-value pairs for the catalog and role. For example, catalog1:roleA;catalog2:roleB sets roleA for catalog1 and roleB for catalog2.|`new Dictionary<string, ClientSelectedRole>() {{"catalog1", new ClientSelectedRole(Type.ROLE, "roleA") }}`|n/a|
-|Schema|Trino default schema|sf1|`schema=sf1`|
-|SessionProperties|Trino session properties initial values.|`new Dictionary<string, string>() { { "query_cache_enabled", "true" }, { "query.cache.ttl", "1h" } }`|`properties=property1:true,property2:100`|
-|Source|Identifier of the client request to be associated with the query|my_service|`source=myclient`|
-|TestConnection|Connection is tested when Open() is called. Slows down the query.|false|`testconnection=true`|
-|TimeZone|Timezone of Trino client.|`TimeZoneInfo.FindSystemTimeZoneById("Eastern Standard Time")`|`timezone=UTC`|
-|TraceToken|Token for tracing service integration flow|f1ec1fc3-60f2-48a2-95e8-663c29146351|`tracetoken=f1ec1fc3-60f2-48a2-95e8-663c29146351`|
-|Server|Alternate method of providing host, port, and enableSsl|`new Uri("https://trino.myhost.net");`|n/a|
-|User|The user connecting to the cluster.|user_name|`user=user_name`|
+---
 
 ## Authentication
 
-Authentication is handled through implementations of `ITrinoAuth`. Each provider must implement:
+All auth providers implement `ITrinoAuth`:
 
-* `AuthorizeAndValidate()`: Initializes or refreshes authorization
-* `AddCredentialToRequest()`: Adds credentials to each HTTP request
-
-Built-in providers include:
-
-#### JWT Bearer Token
-Simple token-based authentication:
 ```csharp
-Auth = new TrinoJWTAuth(token: "your-token-here")
-```
-
-You can implement token refresh:
-```csharp
-TrinoJWTAuth auth = new TrinoJWTAuth(getInitialToken());
-using (TrinoConnection connection = new TrinoConnection(properties))
+public interface ITrinoAuth
 {
-    // Setup automatic refresh every 45 minutes
-    Task.Run(async () =>
-    {
-        while (true)
-        {
-            await Task.Delay(TimeSpan.FromMinutes(45));
-            auth.AccessToken = getNewToken();
-        }
-    });
+    void AuthorizeAndValidate();                        // called on connection open
+    void AddCredentialToRequest(HttpRequestMessage r);  // called per request
 }
 ```
 
-#### Azure Default Credentials
-
-Uses Azure Identity with automatic token management:
+### JWT Bearer Token
 
 ```csharp
-Auth = new TrinoAzureDefaultAuth(scope: "https://myapplication/.default")
+Auth = new TrinoJWTAuth(token: "your-jwt-token")
 ```
 
-#### OAuth Client Credentials
+With periodic refresh:
 
-OAuth 2.0 client credentials flow:
+```csharp
+var auth = new TrinoJWTAuth(GetInitialToken());
+_ = Task.Run(async () =>
+{
+    while (true)
+    {
+        await Task.Delay(TimeSpan.FromMinutes(45));
+        auth.AccessToken = GetNewToken();
+    }
+});
+```
+
+### Basic / LDAP
+
+```csharp
+// Basic (username + optional password)
+Auth = new BasicAuth { User = "myuser", Password = "secret" }
+
+// LDAP (requires both user and password)
+Auth = new LDAPAuth { User = "myuser", Password = "secret" }
+```
+
+### OAuth 2.0 Client Credentials
 
 ```csharp
 Auth = new TrinoOauthClientSecretAuth(
-    tokenEndpoint: "login.microsoftonline.com",
-    clientId: "client-id",
-    clientSecret: "client-secret",
-    scope: "https://myscope/")
+    tokenEndpoint: "https://login.example.com/oauth2/token",
+    clientId:      "my-client-id",
+    clientSecret:  "my-client-secret",
+    scope:         "https://trino.example.com/.default"
+)
 ```
 
-#### Custom Authentication
+### Azure Default Credentials
 
-You can implement custom authentication by implementing ITrinoAuth:
+```csharp
+Auth = new TrinoAzureDefaultAuth(scope: "https://myapp.example.com/.default")
+```
+
+Supports Managed Identity, Azure CLI, environment variables, and other Azure identity sources automatically.
+
+### Custom Authentication
 
 ```csharp
 public class CustomAuth : ITrinoAuth
 {
-    public void AuthorizeAndValidate()
-    {
-        // Initialize or refresh authorization
-        // Called when connection is opened
-    }
+    public void AuthorizeAndValidate() { /* refresh token */ }
 
     public void AddCredentialToRequest(HttpRequestMessage request)
     {
-        // Add authentication headers or other credentials
-        // Called for each request to Trino
-        request.Headers.Add("Authorization", "Custom " + GetCredential());
+        request.Headers.Authorization =
+            new AuthenticationHeaderValue("Bearer", GetToken());
     }
 }
-```
 
-Using the custom auth provider:
-
-```csharp
 properties.Auth = new CustomAuth();
 ```
 
-When using connection strings, any auth class must be in a loaded assembly to be discovered.
+---
 
-### Session Properties
+## User Impersonation
 
-Session properties exist for the duration of the Trino connection. These can be set directly in a SQL command such as `USE tpch.sf1` or `SET SESSION ...`, but you can set and consume these properties directly on the connection.
-
-Example setting session properties:
+Trino supports running queries as a different user via `X-Trino-Authorization-User`. The authenticated user must have impersonation privileges configured on the server.
 
 ```csharp
-using (TrinoConnection connection = new TrinoConnection(properties))
+var properties = new TrinoConnectionProperties
 {
-    connection.ConnectionSession.Properties.Properties.Add("query_cache_enabled", "false");
-    connection.ConnectionSession.Properties.Source = "Client name";
+    Host              = "trino.example.com",
+    User              = "service_account",       // authenticated identity
+    AuthorizationUser = "end_user",              // impersonated identity
+    Auth              = new BasicAuth { User = "service_account", Password = "..." }
+};
 
-    ...
-}
+using var connection = new TrinoConnection(properties);
+using var command    = new TrinoCommand(connection, "SELECT current_user");
+using var reader     = command.ExecuteReader();
+reader.Read();
+Console.WriteLine(reader.GetString(0)); // → "end_user"
 ```
 
-Example reading session properties that are set as part of a query:
+The session's `AuthorizationUser` is automatically updated when the server responds with `X-Trino-Set-Authorization-User`, and cleared when it responds with `X-Trino-Reset-Authorization-User`.
+
+---
+
+## Session Management
+
+Session state is maintained on the `TrinoConnection` and updated after each query based on response headers from Trino.
 
 ```csharp
-using (TrinoConnection connection = new TrinoConnection(properties))
-{
-    using (IDbCommand trinoCommand = new TrinoCommand(connection, "USE tpch.sf10"))
-    {
-        trinoCommand.ExecuteNonQuery();
-    }
-    using (IDbCommand trinoCommand = new TrinoCommand(connection, "SET SESSION hive.insert_existing_partitions_behavior = 'OVERWRITE'"))
-    {
-        trinoCommand.ExecuteNonQuery();
-    }
-    Console.WriteLine($"Catalog: {connection.ConnectionSession.Properties.Catalog}, Schema: {connection.ConnectionSession.Properties.Schema}");
-    Console.WriteLine(string.Join(", ", connection.ConnectionSession.Properties.Properties.Keys.ToArray()));
+using var connection = new TrinoConnection(properties);
+
+// Set session property via SQL
+using (var cmd = new TrinoCommand(connection, "SET SESSION query_max_run_time = '1h'"))
+    cmd.ExecuteNonQuery();
+
+// Change catalog and schema
+using (var cmd = new TrinoCommand(connection, "USE tpch.sf1"))
+    cmd.ExecuteNonQuery();
+
+// Read updated session state
+Console.WriteLine(connection.ConnectionSession.Properties.Catalog); // tpch
+Console.WriteLine(connection.ConnectionSession.Properties.Schema);  // sf1
+Console.WriteLine(string.Join(", ",
+    connection.ConnectionSession.Properties.Properties.Keys));      // query_max_run_time
 ```
 
-Output:
+### Session Properties Reference
 
-```info
-Catalog: tpch, Schema: sf10
-hive.insert_existing_partitions_behavior
-```
+| Property | Type | Description |
+|---|---|---|
+| `User` | `string` | Session user identity |
+| `AuthorizationUser` | `string` | Impersonated user (`X-Trino-Authorization-User`) |
+| `OriginalUser` | `string` | Original user for proxy scenarios |
+| `OriginalRoles` | `HashSet<string>` | Original user's roles for proxy scenarios |
+| `Catalog` | `string` | Default catalog for unqualified table names |
+| `Schema` | `string` | Default schema |
+| `Path` | `string` | SQL path (comma-separated catalog.schema entries) |
+| `TransactionId` | `string` | Active transaction ID (`NONE` when no transaction) |
+| `Properties` | `Dictionary<string,string>` | Trino session properties |
+| `Roles` | `Dictionary<string,ClientSelectedRole>` | Per-catalog role selections |
+| `PreparedStatements` | `Dictionary<string,string>` | Named prepared statements |
+| `ResourceEstimates` | `Dictionary<string,string>` | Planner resource hints |
+| `ExtraCredentials` | `Dictionary<string,string>` | Connector extra credentials |
+| `ClientTags` | `HashSet<string>` | Query tags |
+| `Source` | `string` | Client identifier shown in Trino UI |
+| `TraceToken` | `string` | Distributed trace token |
+| `TimeZone` | `string` | Query processing timezone |
+| `Locale` | `string` | Language locale |
+| `ClientInfo` | `string` | Application description |
+| `Timeout` | `TimeSpan?` | Client-side query timeout |
 
-|Session Property|Notes|
-|-|-|
-|AdditionalHeaders|Key-value pairs of additional HTTP headers to send with requests|
-|AuthorizationUser|The authorized user for the session|
-|Catalog|Default catalog for unqualified table names. Can also be set via connection properties|
-|ClientInfo|Additional information about the client application|
-|ClientRequestTimeout|Timeout duration for client requests|
-|ClientTags|Set of tags associated with the client session|
-|CompressionDisabled|Whether HTTP compression is disabled for responses|
-|ExtraCredentials|Dictionary of additional credentials used by the query|
-|Locale|Locale setting for the session|
-|Path|SQL path for the session, useful for catalog/schema context|
-|PreparedStatements|Dictionary of prepared statements created using SQL `PREPARE ...` syntax|
-|Principal|Principal identity for the session|
-|Properties|Dictionary of Trino session properties that control query behavior|
-|ResourceEstimates|Dictionary of resource estimates for query planning|
-|Roles|Dictionary mapping catalogs to their selected roles|
-|Schema|Default schema for unqualified table names. Can also be set via connection properties|
-|Server|URI of the Trino server|
-|Source|Identifier for the client application making the request|
-|TimeZone|Timezone for query processing (string format, compatible with Java's ZoneId)|
-|TraceToken|Token used for query tracing and debugging|
-|TransactionId|ID of the current transaction if in a transaction|
-|User|User identity for the session (may be overridden by server)|
+---
 
-### Streaming
+## Parameterized Queries
 
-Results are consumed from the IDataReader interface. As the rows are consumed Trino will asynchronously produce results which are then asynchronously pulled by the client. The default buffer size is 50MB (defined as MaxTargetResultSizeMB * 10), which means the client will pull in 50MB of data before blocking until those rows are consumed from the client.
-
-To customize the buffer size, provide the byte size of the buffer when creating the reader. If you provide a value of 0, the client will read one page ahead and wait until that page is consumed.
+Trino uses positional `?` parameters only. Named parameters (`@param`) are not supported.
 
 ```csharp
-IDataReader idr = trinoCommand.ExecuteReader(1024 * 1024 * 100); // 100 mb
+using var cmd = new TrinoCommand(connection,
+    "SELECT name FROM tpch.tiny.nation WHERE nationkey = ? AND name != ?");
+
+cmd.Parameters.Add(new TrinoParameter { Value = 1 });
+cmd.Parameters.Add(new TrinoParameter { Value = "ARGENTINA" });
+
+using var reader = cmd.ExecuteReader();
+while (reader.Read())
+    Console.WriteLine(reader.GetString(0));
 ```
+
+Parameters are converted to Trino-typed literals and sent as a `PREPARE` / `EXECUTE` pair on the server.
+
+---
+
+## Retry Logic
+
+The client automatically retries on transient HTTP errors with exponential backoff.
+
+| Status Code | Behavior | Max Retries |
+|---|---|---|
+| `502 Bad Gateway` | Retry with backoff | 5 |
+| `503 Service Unavailable` | Retry with backoff | 5 |
+| `504 Gateway Timeout` | Retry with backoff | 5 |
+
+Backoff starts at 100 ms and caps at 3 seconds. After 5 retries a `TrinoException` is thrown containing the status code.
+
+---
+
+## Streaming
+
+Result rows are delivered via a read-ahead pipeline. The client fetches pages from Trino into an internal buffer asynchronously; `IDataReader.Read()` consumes from that buffer with no per-row network wait.
+
+```csharp
+// Default buffer: 50 MB
+using var reader = cmd.ExecuteReader();
+
+// Custom buffer: 100 MB
+using var reader = cmd.ExecuteReader(bufferSizeBytes: 100 * 1024 * 1024);
+
+// Minimal buffer: one page look-ahead (memory-conservative)
+using var reader = cmd.ExecuteReader(bufferSizeBytes: 0);
+```
+
+### Streaming Performance (single-node Docker)
+
+| Dataset | Rows | First Row | Total | Throughput |
+|---|---|---|---|---|
+| `tpch.tiny.customer` | 1,500 | 1,638 ms | 2.2 s | 682 rows/s |
+| `tpch.sf1.customer` | 150,000 | 197 ms | 1.05 s | 142,683 rows/s |
+| `tpch.sf1.lineitem` | 6,001,215 | 182 ms | 21.05 s | 285,074 rows/s |
+
+> First-row latency on `tiny` is higher due to JVM warmup; subsequent queries stabilize at ~180–200 ms.
+
+---
+
+## Cancellation and Resource Cleanup
+
+The client ensures server-side queries are cleaned up when a reader is disposed mid-stream:
+
+```csharp
+using var cmd    = new TrinoCommand(connection, "SELECT * FROM huge_table");
+using var reader = cmd.ExecuteReader();
+
+reader.Read();     // fetch a few rows
+// Disposing reader sends DELETE to nextUri, cancelling the server query immediately.
+```
+
+Queries are also cancelled if a `CancellationToken` fires during execution:
+
+```csharp
+using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+using var cmd = new TrinoCommand(connection, "SELECT * FROM huge_table",
+                                 timeout: null, cancellationToken: cts.Token);
+
+using var reader = cmd.ExecuteReader();
+while (reader.Read()) { ... }
+```
+
+---
+
+## Protocol Compatibility (Trino 478+)
+
+All headers from `ProtocolHeaders.java` (Trino master) are implemented.
+
+### Request Headers Sent
+
+| Header | Purpose |
+|---|---|
+| `X-Trino-User` | Authenticated user identity |
+| `X-Trino-Authorization-User` | Impersonated user |
+| `X-Trino-Original-User` | Original end-user (proxy scenarios) |
+| `X-Trino-Original-Roles` | Original user's roles (proxy scenarios) |
+| `X-Trino-Source` | Client source identifier |
+| `X-Trino-Catalog` | Default catalog |
+| `X-Trino-Schema` | Default schema |
+| `X-Trino-Path` | SQL path |
+| `X-Trino-Time-Zone` | Session timezone |
+| `X-Trino-Language` | Session locale |
+| `X-Trino-Trace-Token` | Distributed trace token |
+| `X-Trino-Session` | Session properties (multiple) |
+| `X-Trino-Role` | Per-catalog roles (multiple) |
+| `X-Trino-Prepared-Statement` | Prepared statements (multiple) |
+| `X-Trino-Transaction-Id` | Active transaction ID or `NONE` |
+| `X-Trino-Client-Info` | Application description |
+| `X-Trino-Client-Tags` | Query tags |
+| `X-Trino-Client-Capabilities` | `PARAMETRIC_DATETIME` |
+| `X-Trino-Resource-Estimate` | Planner hints (multiple) |
+| `X-Trino-Extra-Credential` | Connector credentials (multiple) |
+| `X-Trino-Query-Data-Encoding` | `json` (explicit, prevents binary fallback) |
+
+### Response Headers Processed
+
+| Header | Action |
+|---|---|
+| `X-Trino-Set-Catalog` | Updates session catalog |
+| `X-Trino-Set-Schema` | Updates session schema |
+| `X-Trino-Set-Path` | Updates session path |
+| `X-Trino-Set-Session` | Adds/updates session properties |
+| `X-Trino-Clear-Session` | Removes session properties |
+| `X-Trino-Set-Role` | Updates per-catalog roles |
+| `X-Trino-Set-Original-Roles` | Updates original user's roles |
+| `X-Trino-Added-Prepare` | Registers prepared statements |
+| `X-Trino-Deallocated-Prepare` | Removes prepared statements |
+| `X-Trino-Started-Transaction-Id` | Records new transaction ID |
+| `X-Trino-Clear-Transaction-Id` | Clears transaction ID |
+| `X-Trino-Set-Authorization-User` | Updates impersonated user |
+| `X-Trino-Reset-Authorization-User` | Clears impersonated user |
+
+---
+
+## Type Mapping
+
+| Trino Type | .NET Type |
+|---|---|
+| `boolean` | `bool` |
+| `tinyint` | `sbyte` |
+| `smallint` | `short` |
+| `integer` | `int` |
+| `bigint` | `long` |
+| `real` | `float` |
+| `double` | `double` |
+| `decimal(p,s)` | `TrinoBigDecimal` |
+| `varchar`, `char` | `string` / `char[]` |
+| `varbinary` | `byte[]` |
+| `date` | `DateTime` |
+| `time` | `TimeSpan` |
+| `time with time zone` | `string` |
+| `timestamp` | `DateTime` |
+| `timestamp with time zone` | `DateTimeOffset` |
+| `interval year to month` | `DateTime` |
+| `interval day to second` | `TimeSpan` |
+| `uuid` | `string` |
+| `ipaddress` | `string` |
+| `array(T)` | `List<object>` |
+| `map(K,V)` | `Dictionary<object,object>` |
+| `row(...)` | `Dictionary<string,object>` |
+| `json` | `string` |
+| `HyperLogLog`, `P4HyperLogLog` | `byte[]` |
+
+---
+
+## Running Tests
+
+### Unit Tests (mock HTTP server, no Trino required)
+
+```bash
+dotnet test trino-csharp/Trino.Client.Test/Trino.Client.Test.csproj
+# 38 tests, ~20 s
+```
+
+### Integration Tests (requires a running Trino cluster)
+
+```bash
+# Default: localhost:8081 (no auth)
+dotnet run --project trino-csharp/Trino.Integration.Test/Trino.Integration.Test.csproj
+```
+
+#### Integration Test Coverage
+
+| # | Test | Validates |
+|---|---|---|
+| 1 | Basic SELECT 1 | Connection, query execution |
+| 2 | SHOW CATALOGS | Multi-row result parsing |
+| 3 | SHOW SCHEMAS | Catalog enumeration |
+| 4 | tpch.tiny.nation | Data row reading |
+| 5 | Aggregation query | COUNT / AVG / MAX |
+| 6 | Large streaming | 60,175 rows, tpch.tiny.lineitem |
+| 7 | SET SESSION | Non-query execution |
+| 8 | GetSchema | ADO.NET schema discovery |
+| 9 | Parameter binding | Positional `?` parameter |
+| 10 | Timeout | Client-side timeout, no hang |
+| 11 | Impersonation | `X-Trino-Authorization-User` |
+
+### Sample Programs
+
+```bash
+cd trino-csharp/Trino.Platform.Samples
+
+# Interactive menu
+dotnet run
+
+# Run all 10 examples non-interactively
+dotnet run -- --test
+```
+
+---
+
+## Quick-Start with Docker
+
+```bash
+# Start Trino
+docker run -d --name trino -p 8080:8080 trinodb/trino:latest
+
+# Wait for startup (~30 s), then run integration tests
+dotnet run --project trino-csharp/Trino.Integration.Test/Trino.Integration.Test.csproj
+```
+
+Point the integration test at the Docker instance by editing the `Host`/`Port` constants in `Trino.Integration.Test/Program.cs`.
+
+---
+
+## Changelog
+
+### 2026-05 — Trino 478 Protocol Compatibility
+
+- **Fixed** inverted `Transaction-Id` header condition; always sends `NONE` when no active transaction.
+- **Fixed** `ClientSelectedRole.ToString()` was emitting the C# class name instead of `ALL` / `NONE` / `ROLE{name}`.
+- **Fixed** disposal chain (`TrinoDataReader → Records → PageQueue → StatementClientV1`) to cancel server-side queries on `Close()`.
+- **Fixed** cancellation during HTTP POST: now submits with `CancellationToken.None` then immediately cancels server query if user token fired.
+- **Added** processing for `X-Trino-Clear-Session`, `X-Trino-Set-Role`, `X-Trino-Started-Transaction-Id`, `X-Trino-Clear-Transaction-Id` response headers.
+- **Added** `X-Trino-Query-Data-Encoding: json` request header to prevent binary encoding fallback.
+- **Added** `X-Trino-Original-User` / `X-Trino-Original-Roles` headers for proxy/gateway scenarios.
+- **Added** `X-Trino-Set-Original-Roles` response header processing.
+- **Added** user impersonation via `AuthorizationUser` connection property.
+- **Added** automatic retry with exponential backoff for 502 / 503 / 504.
+- **Added** `Trino.Integration.Test` project (11 live integration tests).
+- **Added** `Trino.Platform.Samples` project (10 usage examples).
+
+---
+
+## License
+
+Apache License 2.0 — same as the upstream [trinodb/trino-csharp-client](https://github.com/trinodb/trino-csharp-client).
