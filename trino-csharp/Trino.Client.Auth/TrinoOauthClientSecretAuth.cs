@@ -1,11 +1,12 @@
 using System;
 using System.Collections.Generic;
 using System.Net.Http;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace Trino.Client.Auth
 {
-    public class TrinoOauthClientSecretAuth : ITrinoAuth
+    public class TrinoOauthClientSecretAuth : ITrinoAuth, IDisposable
     {
         private static readonly HttpClient _sharedHttpClient = new HttpClient();
         public string TokenEndpoint { get; set; }
@@ -15,6 +16,8 @@ namespace Trino.Client.Auth
         public string ClientSecret { private get; set; }
         private string _accessToken;
         private DateTime _tokenExpiry;
+        private readonly SemaphoreSlim _refreshLock = new SemaphoreSlim(1, 1);
+        private bool _disposed;
 
         public TrinoOauthClientSecretAuth()
         {
@@ -37,20 +40,37 @@ namespace Trino.Client.Auth
                 throw new InvalidOperationException("OAuth2 configuration is missing required properties.");
             }
 
-            var tokenResponse = GetTokenAsync(TokenEndpoint, ClientId, ClientSecret, Scope)
-                .ConfigureAwait(false).GetAwaiter().GetResult();
-            _accessToken = tokenResponse.AccessToken;
-            _tokenExpiry = DateTime.UtcNow.AddSeconds(tokenResponse.ExpiresIn);
+            RefreshIfExpiredAsync().ConfigureAwait(false).GetAwaiter().GetResult();
         }
 
         public void AddCredentialToRequest(HttpRequestMessage httpRequestMessage)
         {
-            if (string.IsNullOrEmpty(_accessToken) || DateTime.UtcNow >= _tokenExpiry)
-            {
-                AuthorizeAndValidate();
-            }
-
+            RefreshIfExpiredAsync().ConfigureAwait(false).GetAwaiter().GetResult();
             httpRequestMessage.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", _accessToken);
+        }
+
+        private async Task RefreshIfExpiredAsync()
+        {
+            // Fast path: token is still valid (30-second buffer before actual expiry).
+            if (!string.IsNullOrEmpty(_accessToken) && DateTime.UtcNow < _tokenExpiry.AddSeconds(-30))
+                return;
+
+            await _refreshLock.WaitAsync().ConfigureAwait(false);
+            try
+            {
+                // Double-check after acquiring the lock.
+                if (string.IsNullOrEmpty(_accessToken) || DateTime.UtcNow >= _tokenExpiry.AddSeconds(-30))
+                {
+                    var tokenResponse = await GetTokenAsync(TokenEndpoint, ClientId, ClientSecret, Scope)
+                        .ConfigureAwait(false);
+                    _accessToken = tokenResponse.AccessToken;
+                    _tokenExpiry = DateTime.UtcNow.AddSeconds(tokenResponse.ExpiresIn);
+                }
+            }
+            finally
+            {
+                _refreshLock.Release();
+            }
         }
 
         private async Task<TokenResponse> GetTokenAsync(string tokenEndpoint, string clientId, string clientSecret, string scope)
@@ -71,6 +91,15 @@ namespace Trino.Client.Auth
 
             var content = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
             return Newtonsoft.Json.JsonConvert.DeserializeObject<TokenResponse>(content);
+        }
+
+        public void Dispose()
+        {
+            if (!_disposed)
+            {
+                _disposed = true;
+                _refreshLock.Dispose();
+            }
         }
 
         private class TokenResponse

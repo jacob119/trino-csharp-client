@@ -57,15 +57,30 @@ namespace Trino.Client
         /// </summary>
         public bool IsQuery { get; private set; }
 
+        // Backing fields for cross-thread shared state — always access via Volatile.Read/Write.
+        private IList<TrinoColumn> _columns;
+        private Statement _lastStatement;
+        private int _hasResults;
+
         /// <summary>
         /// The schema columns.
         /// </summary>
-        internal IList<TrinoColumn> Columns { get; private set; }
-        internal bool IsEmpty { get { return responseQueue.Count == 0; } }
+        internal IList<TrinoColumn> Columns
+        {
+            get => Volatile.Read(ref _columns);
+            private set => Volatile.Write(ref _columns, value);
+        }
+
+        internal bool IsEmpty => responseQueue.Count == 0;
+
         /// <summary>
         /// The last response from the statement endpoint.
         /// </summary>
-        internal Statement LastStatement { get; private set; }
+        internal Statement LastStatement
+        {
+            get => Volatile.Read(ref _lastStatement);
+            private set => Volatile.Write(ref _lastStatement, value);
+        }
 
         /// <summary>
         /// True if the last page has been reached.
@@ -75,12 +90,12 @@ namespace Trino.Client
         /// <summary>
         /// The client state.
         /// </summary>
-        internal QueryState State { get => client.State; }
+        internal QueryState State => client.State;
 
         /// <summary>
         /// True if results have been found in Trino responses.
         /// </summary>
-        internal bool HasResults { get; private set; }
+        internal bool HasResults => Volatile.Read(ref _hasResults) != 0;
 
         /// <summary>
         /// Starts a thread to asynchronously read ahead to fill the queue with the result set.
@@ -130,9 +145,14 @@ namespace Trino.Client
                     {
                         this.responseQueue.Enqueue(statementResponse);
                         Interlocked.Add(ref currentQueueBytes, statementResponse.SizeBytes);
-                        HasResults = true;
                         this.LastStatement = statementResponse.Response;
                         signalUpdatedQueue.Release();
+
+                        // Signal first-result waiters exactly once.
+                        if (Interlocked.CompareExchange(ref _hasResults, 1, 0) == 0)
+                        {
+                            signalFoundResult.Release();
+                        }
                     }
                     else
                     {
@@ -227,13 +247,18 @@ namespace Trino.Client
 
         /// <summary>
         /// Throw an exception if there are any errors during the read.
+        /// OperationCanceledException is rethrown directly to honour the .NET cancellation contract.
         /// </summary>
         internal void ThrowIfErrors()
         {
-            if (errors.Any())
+            if (!errors.Any()) return;
+
+            foreach (var ex in errors)
             {
-                throw new TrinoAggregateException(errors);
+                if (ex is OperationCanceledException oce)
+                    throw oce;
             }
+            throw new TrinoAggregateException(errors);
         }
 
         /// <summary>
@@ -275,6 +300,16 @@ namespace Trino.Client
 
         public void Dispose()
         {
+            // Wait for the background ReadAhead task to stop before disposing the semaphores
+            // it may still be signalling. Cancel() has already been called by Pages.Dispose()
+            // so the loop should exit quickly.
+            Task localReadAhead;
+            lock (readAheadLock) { localReadAhead = readAhead; }
+            if (localReadAhead != null && !localReadAhead.IsCompleted)
+            {
+                try { localReadAhead.Wait(TimeSpan.FromSeconds(5)); } catch { }
+            }
+
             signalUpdatedQueue.Dispose();
             signalFoundResult.Dispose();
             signalColumnsRead.Dispose();

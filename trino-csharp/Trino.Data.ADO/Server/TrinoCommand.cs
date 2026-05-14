@@ -23,7 +23,7 @@ namespace Trino.Data.ADO.Server
         /// <summary>
         /// Gets the cancellation token source that triggers query cancellation, including server-side cancellation.
         /// </summary>
-        public CancellationTokenSource CancellationToken { get; }
+        public CancellationTokenSource CancellationTokenSource { get; }
 
         /// <summary>
         /// Gets or sets the logger instance used for command execution logging.
@@ -67,13 +67,13 @@ namespace Trino.Data.ADO.Server
         /// <param name="connection">The Trino connection to use.</param>
         /// <param name="statement">The SQL statement to execute.</param>
         /// <param name="timeout">The time to wait for command execution.</param>
-        /// <param name="cancellationToken">The token to monitor for cancellation requests.</param>
+        /// <param name="cancellationTokenSource">The token source to monitor for cancellation requests.</param>
         /// <param name="logger">The logger instance for command execution logging.</param>
         public TrinoCommand(
             TrinoConnection connection,
             string statement,
             TimeSpan timeout,
-            CancellationTokenSource cancellationToken,
+            CancellationTokenSource cancellationTokenSource,
             ILoggerWrapper logger)
         {
             if (timeout != TimeSpan.MaxValue)
@@ -82,7 +82,7 @@ namespace Trino.Data.ADO.Server
             }
             Connection = connection;
             CommandText = statement;
-            CancellationToken = cancellationToken ?? new CancellationTokenSource();
+            CancellationTokenSource = cancellationTokenSource ?? new CancellationTokenSource();
             Logger = logger;
             parameters = new TrinoParameterCollection();
         }
@@ -173,7 +173,7 @@ namespace Trino.Data.ADO.Server
                     return null;
                 }
 
-                CancellationToken.Cancel();
+                CancellationTokenSource.Cancel();
                 return records.Columns.Count > 0 ? records.GetValue<object>(0) : null;
             }
             finally
@@ -208,7 +208,7 @@ namespace Trino.Data.ADO.Server
                 queryParameters: ConvertParameters(Parameters),
                 bufferSize: bufferSizeBytes,
                 isQuery: true,
-                cancellationToken: CancellationToken.Token).ConfigureAwait(false);
+                cancellationToken: CancellationTokenSource.Token).ConfigureAwait(false);
         }
 
         /// <summary>
@@ -248,7 +248,7 @@ namespace Trino.Data.ADO.Server
         /// </summary>
         protected override DbDataReader ExecuteDbDataReader(CommandBehavior behavior)
         {
-            return ExecuteDbDataReaderAsync(behavior, CancellationToken.Token).SafeResult();
+            return ExecuteDbDataReaderAsync(behavior, CancellationTokenSource.Token).SafeResult();
         }
 
         #endregion
@@ -268,7 +268,7 @@ namespace Trino.Data.ADO.Server
                 queryParameters: ConvertParameters(Parameters),
                 bufferSize: Constants.DefaultBufferSizeBytes,
                 isQuery: false,
-                cancellationToken: CancellationToken.Token).ConfigureAwait(false);
+                cancellationToken: CancellationTokenSource.Token).ConfigureAwait(false);
         }
 
         /// <summary>
@@ -287,14 +287,14 @@ namespace Trino.Data.ADO.Server
         /// </summary>
         public override void Cancel()
         {
-            CancellationToken.Cancel();
+            CancellationTokenSource.Cancel();
         }
 
         protected override void Dispose(bool disposing)
         {
             if (disposing)
             {
-                CancellationToken.Dispose();
+                CancellationTokenSource.Dispose();
             }
             base.Dispose(disposing);
         }

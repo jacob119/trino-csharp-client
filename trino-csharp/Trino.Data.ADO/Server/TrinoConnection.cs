@@ -207,11 +207,8 @@ namespace Trino.Data.ADO.Server
             switch (collectionName.ToLower())
             {
                 case "catalogs":
-                    return new TrinoCommand(this, "SHOW CATALOGS")
-                        .RunQuery()
-                        .SafeResult()
-                        .BuildDataTableAsync()
-                        .SafeResult();
+                    using (var cmd = new TrinoCommand(this, "SHOW CATALOGS"))
+                        return cmd.RunQuery().SafeResult().BuildDataTableAsync().SafeResult();
 
                 case "databases":
                 case "schemas":
@@ -244,18 +241,12 @@ namespace Trino.Data.ADO.Server
                         SchemaUtils.BuildFilterForRestrictions(ConnectionSession, SchemaUtils.ViewRestrictionsMapping, restrictionValues));
 
                 case "functions":
-                    return new TrinoCommand(this, "SHOW FUNCTIONS")
-                        .RunQuery()
-                        .SafeResult()
-                        .BuildDataTableAsync()
-                        .SafeResult();
+                    using (var cmd = new TrinoCommand(this, "SHOW FUNCTIONS"))
+                        return cmd.RunQuery().SafeResult().BuildDataTableAsync().SafeResult();
 
                 case "sessions":
-                    return new TrinoCommand(this, "SHOW SESSION")
-                        .RunQuery()
-                        .SafeResult()
-                        .BuildDataTableAsync()
-                        .SafeResult();
+                    using (var cmd = new TrinoCommand(this, "SHOW SESSION"))
+                        return cmd.RunQuery().SafeResult().BuildDataTableAsync().SafeResult();
 
                 default:
                     throw new NotSupportedException($"Collection {collectionName} is not supported.");

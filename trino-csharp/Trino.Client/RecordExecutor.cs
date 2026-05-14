@@ -11,7 +11,7 @@ namespace Trino.Client
     /// <summary>
     /// Provides asynchronous streaming query execution for Trino.
     /// </summary>
-    public class RecordExecutor : IEnumerable<List<object>>
+    public class RecordExecutor : IEnumerable<List<object>>, IDisposable
     {
         /// <summary>
         /// Gets the source of data pages containing query results.
@@ -120,6 +120,11 @@ namespace Trino.Client
         IEnumerator IEnumerable.GetEnumerator()
         {
             return GetEnumerator();
+        }
+
+        public void Dispose()
+        {
+            Records.Dispose();
         }
     }
 }

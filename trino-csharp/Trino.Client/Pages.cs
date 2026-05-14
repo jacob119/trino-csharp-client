@@ -84,14 +84,13 @@ namespace Trino.Client
         /// </summary>
         public async Task<bool> MoveNextAsync()
         {
+            // Acquire BEFORE the try so the finally only runs when we actually hold the semaphore.
+            if (!allowOneThreadToReadPages.Wait(0))
+            {
+                throw new TrinoException("Only one reader can advance pages at a time.");
+            }
             try
             {
-                // prevent access from multiple threads
-                if (!allowOneThreadToReadPages.Wait(0))
-                {
-                    throw new TrinoException("Only one reader can advance pages at a time.");
-                }
-                
                 logger?.LogDebug("Trino Query Executor: Next page requested: queryId:{0}", this.LastStatement?.id);
                 pageQueue.ThrowIfErrors();
 
