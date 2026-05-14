@@ -7,7 +7,7 @@ Trino C# Client 라이브러리([trinodb/trino-csharp-client](https://github.com
 | 항목 | 값 |
 |---|---|
 | Trino Server | v479 (Docker `trinodb/trino:latest`) |
-| C# Client | trinodb/trino-csharp-client (netstandard2.0) |
+| C# Client | trinodb/trino-csharp-client (netstandard2.0 / net48) |
 | Runtime | .NET 8.0.417 |
 | OS | macOS (Darwin 25.2.0, ARM64) |
 | 접속 | HTTP localhost:8080, 인증 없음 |
@@ -64,9 +64,9 @@ Trino.Platform.Samples/
 
 | 패키지 | 버전 | 용도 |
 |---|---|---|
-| Trino.Client | netstandard2.0 | 코어 클라이언트 (ProjectReference) |
-| Trino.Data.ADO | netstandard2.0 | ADO.NET 래퍼 (ProjectReference) |
-| Trino.Client.Auth | netstandard2.0 | 인증 모듈 (ProjectReference) |
+| Trino.Client | netstandard2.0 / net48 | 코어 클라이언트 (ProjectReference) |
+| Trino.Data.ADO | netstandard2.0 / net48 | ADO.NET 래퍼 (ProjectReference) |
+| Trino.Client.Auth | netstandard2.0 / net48 | 인증 모듈 (ProjectReference) |
 | Newtonsoft.Json | 13.0.1 | JSON 처리 (Trino.Client 의존) |
 | Microsoft.Extensions.Configuration.Json | 8.0.1 | appsettings.json 로딩 |
 

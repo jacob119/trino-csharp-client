@@ -27,9 +27,9 @@ Project introduction at Trino Summit 2024 by George Fischer
 
 ```
 trino-csharp/
-├── Trino.Client/                   # Core SDK (.NET Standard 2.0)
-├── Trino.Data.ADO/                 # ADO.NET wrapper (.NET Standard 2.0)
-├── Trino.Client.Auth/              # Authentication providers (.NET Standard 2.0)
+├── Trino.Client/                   # Core SDK (netstandard2.0 / net48)
+├── Trino.Data.ADO/                 # ADO.NET wrapper (netstandard2.0 / net48)
+├── Trino.Client.Auth/              # Authentication providers (netstandard2.0 / net48)
 ├── Trino.Client.Test/              # Unit tests (38 tests, mock HTTP server)
 ├── Trino.Integration.Test/         # Integration tests against a real Trino cluster
 └── Trino.Platform.Samples/         # Usage examples and sample programs
@@ -39,14 +39,14 @@ trino-csharp/
 
 | Library | Description | Target | Notes |
 |---|---|---|---|
-| `Trino.Client` | Core Trino SDK | .NET Standard 2.0 | Protocol, session management, query execution, result streaming |
-| `Trino.Data.ADO` | ADO.NET wrapper | .NET Standard 2.0 | `DbConnection`, `DbCommand`, `IDataReader`, schema discovery |
-| `Trino.Client.Auth` | Authentication providers | .NET Standard 2.0 | Separate package to avoid dependency conflicts |
+| `Trino.Client` | Core Trino SDK | netstandard2.0 / net48 | Protocol, session management, query execution, result streaming |
+| `Trino.Data.ADO` | ADO.NET wrapper | netstandard2.0 / net48 | `DbConnection`, `DbCommand`, `IDataReader`, schema discovery |
+| `Trino.Client.Auth` | Authentication providers | netstandard2.0 / net48 | Separate package to avoid dependency conflicts |
 | `Trino.Integration.Test` | Integration test runner | .NET 10 | 11 live tests against Trino cluster |
 | `Trino.Platform.Samples` | Sample programs | .NET 10 | 10 example patterns with `appsettings.json` config |
 | `Trino.Platform.Samples.Tests` | Sample integration tests | .NET 10 | xUnit tests for HTTP client samples |
 
-> **Note:** .NET Standard 2.0 provides compatibility with .NET Framework 4.7.2+.
+> **Note:** Libraries target both netstandard2.0 (compatible with .NET Framework 4.7.2+) and net48 (native .NET Framework 4.8 support) in a single NuGet package.
 > `IAsyncEnumerable` is not available in .NET Standard 2.0 but the async read-ahead buffer means you do not need to await every row.
 
 ---
@@ -62,11 +62,13 @@ dotnet build trino-csharp/TrinoDriver.sln
 
 ### NuGet Packages
 
-```cmd
-nuget pack Trino.Client\Trino.Client.nuspec -Version 1.0.0
-nuget pack Trino.Data.ADO\Trino.Data.ADO.nuspec -Version 1.0.0
-nuget pack Trino.Client.Auth\Trino.Client.Auth.nuspec -Version 1.0.0
+```bash
+dotnet pack trino-csharp/Trino.Client/Trino.Client.csproj -c Release
+dotnet pack trino-csharp/Trino.Data.ADO/Trino.Data.ADO.csproj -c Release
+dotnet pack trino-csharp/Trino.Client.Auth/Trino.Client.Auth.csproj -c Release
 ```
+
+Each package contains both `netstandard2.0` and `net48` builds automatically.
 
 ### Visual Studio
 
@@ -421,9 +423,8 @@ reader.Read();     // fetch a few rows
 Queries are also cancelled if a `CancellationToken` fires during execution:
 
 ```csharp
-using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-using var cmd = new TrinoCommand(connection, "SELECT * FROM huge_table",
-                                 timeout: null, cancellationToken: cts.Token);
+using var cmd = new TrinoCommand(connection, "SELECT * FROM huge_table");
+cmd.CancellationTokenSource.CancelAfter(TimeSpan.FromSeconds(10));
 
 using var reader = cmd.ExecuteReader();
 while (reader.Read()) { ... }
@@ -573,6 +574,24 @@ Point the integration test at the Docker instance by editing the `Host`/`Port` c
 ---
 
 ## Changelog
+
+### 2026-05 — Concurrency Safety, Performance, and Multi-targeting
+
+- **Fixed** `Pages.MoveNextAsync` semaphore acquire/release bug (SemaphoreFullException corruption).
+- **Fixed** `PageQueue.Dispose` race condition (now waits for ReadAhead background task to avoid ObjectDisposedException).
+- **Fixed** cross-thread field safety with `Volatile.Read/Write` on `Columns`, `LastStatement`, `HasResults` for ARM64 compatibility.
+- **Fixed** `TrinoConnection.GetSchema()` `CancellationTokenSource` resource leak (added proper disposal).
+- **Fixed** `OperationCanceledException` now propagates directly instead of being wrapped in `TrinoAggregateException`.
+- **Fixed** `Records.isClosed` uses `Volatile.Read/Write` for thread-safe visibility.
+- **Fixed** `H6` — `CastWithNullCheck` replaced exception-driven casting with `is` pattern matching (major performance improvement for large result sets).
+- **Fixed** `TrinoOauthClientSecretAuth` token refresh is now thread-safe (SemaphoreSlim double-check lock pattern).
+- **Fixed** `signalFoundResult` semaphore now properly released exactly once.
+- **Changed** `TrinoCommand.CancellationToken` property renamed to `TrinoCommand.CancellationTokenSource` (type: `System.Threading.CancellationTokenSource`).
+- **Changed** `RecordExecutor` now implements `IDisposable`.
+- **Changed** `RecordExecutor.GetEnumerator()` now enforces one-shot enumeration (throws `InvalidOperationException` if called more than once).
+- **Added** Multi-targeting: all three library projects (Trino.Client, Trino.Data.ADO, Trino.Client.Auth) now target **both** `netstandard2.0` AND `net48` in a single NuGet package.
+- **Changed** NuGet packaging: use `dotnet pack` instead of legacy `.nuspec` files.
+- **Updated** `System.Web.HttpUtility` replaced with `System.Net.WebUtility` in StatementClientV1.cs (no behavior change).
 
 ### 2026-05 — Trino 478 Protocol Compatibility
 
