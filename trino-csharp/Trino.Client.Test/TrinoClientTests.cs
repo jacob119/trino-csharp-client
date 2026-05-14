@@ -407,8 +407,8 @@ namespace Trino.Client.Test
                             Assert.AreEqual(true, idr.GetValue(9));
                             Assert.AreEqual("boolean_column", tableWithSchema.Columns[9].ToString());
 
-                            Assert.AreEqual(typeof(Char[]), idr.GetValue(10).GetType());
-                            Assert.AreEqual("0123456789", new string((Char[])idr.GetValue(10)));
+                            Assert.AreEqual(typeof(string), idr.GetValue(10).GetType());
+                            Assert.AreEqual("0123456789", idr.GetValue(10));
                             Assert.AreEqual("char_column", tableWithSchema.Columns[10].ToString());
 
                             Assert.AreEqual(typeof(string), idr.GetValue(11).GetType());
