@@ -7,7 +7,7 @@ namespace Trino.Client.Auth
     /// </summary>
     public class TrinoJWTAuth : ITrinoAuth
     {
-        public static string AccessTokenProperty = "AccessToken";
+        public const string AccessTokenProperty = "AccessToken";
 
         /// <summary>
         /// Create an JWT credential.

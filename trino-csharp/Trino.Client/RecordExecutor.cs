@@ -84,11 +84,12 @@ namespace Trino.Client
                 .ConfigureAwait(false);
 
             PageQueue pageQueue = new PageQueue(
-                logger, 
-                queryStatusNotifications, 
-                statementClient, 
-                bufferSize, 
-                isQuery);
+                logger,
+                queryStatusNotifications,
+                statementClient,
+                bufferSize,
+                isQuery,
+                cancellationToken);
 
             pageQueue.StartReadAhead();
 

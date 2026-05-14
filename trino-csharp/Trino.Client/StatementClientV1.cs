@@ -27,7 +27,7 @@ namespace Trino.Client
     /// <summary>
     /// Handles direct interactions with Trino statement rest API /v1/statement/
     /// </summary>
-    internal class StatementClientV1 : AbstractClient<Statement>
+    internal class StatementClientV1 : AbstractClient<Statement>, IDisposable
     {
         // Initialize values for client response delay
         // Java client has 100ms initial delay, but 50ms provides noticably better performance in testing.
@@ -63,6 +63,8 @@ namespace Trino.Client
 
         // Timeout properties
         private readonly Stopwatch stopwatch = new Stopwatch();
+        private bool _disposed;
+        private bool _ownsHttpClient;
 
         /// <summary>
         /// Last statement v1 response. Used to get stats and status from the server.
@@ -152,8 +154,8 @@ namespace Trino.Client
                 return sslPolicyErrors == SslPolicyErrors.None;
             };
 
-            // Fix: assign to this.httpClient so the configured handler is actually used.
             this.httpClient = new HttpClient(handler);
+            _ownsHttpClient = true;
             this.httpClient.Timeout = Constants.HttpConnectionTimeout;
 
             if (!this.Session.Properties.CompressionDisabled)
@@ -586,6 +588,14 @@ namespace Trino.Client
             {
                 request.Headers.Add(protocolHeaders.RequestOriginalRoles, string.Join(",", Session.Properties.OriginalRoles));
             }
+        }
+
+        public void Dispose()
+        {
+            if (_disposed) return;
+            _disposed = true;
+            if (_ownsHttpClient)
+                httpClient.Dispose();
         }
 
         private enum QueryCancellationReason

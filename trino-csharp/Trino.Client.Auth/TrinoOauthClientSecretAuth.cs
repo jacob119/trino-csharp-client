@@ -7,6 +7,7 @@ namespace Trino.Client.Auth
 {
     public class TrinoOauthClientSecretAuth : ITrinoAuth
     {
+        private static readonly HttpClient _sharedHttpClient = new HttpClient();
         public string TokenEndpoint { get; set; }
         public string ClientId { get; set; }
         public string Scope { get; set; }
@@ -53,25 +54,22 @@ namespace Trino.Client.Auth
 
         private async Task<TokenResponse> GetTokenAsync(string tokenEndpoint, string clientId, string clientSecret, string scope)
         {
-            using (var httpClient = new HttpClient())
+            var request = new HttpRequestMessage(HttpMethod.Post, tokenEndpoint)
             {
-                var request = new HttpRequestMessage(HttpMethod.Post, tokenEndpoint)
+                Content = new FormUrlEncodedContent(new[]
                 {
-                    Content = new FormUrlEncodedContent(new[]
-                    {
-                        new KeyValuePair<string, string>("client_id", clientId),
-                        new KeyValuePair<string, string>("client_secret", clientSecret),
-                        new KeyValuePair<string, string>("grant_type", "client_credentials"),
-                        new KeyValuePair<string, string>("scope", scope)
-                    })
-                };
+                    new KeyValuePair<string, string>("client_id", clientId),
+                    new KeyValuePair<string, string>("client_secret", clientSecret),
+                    new KeyValuePair<string, string>("grant_type", "client_credentials"),
+                    new KeyValuePair<string, string>("scope", scope)
+                })
+            };
 
-                var response = await httpClient.SendAsync(request);
-                response.EnsureSuccessStatusCode();
+            var response = await _sharedHttpClient.SendAsync(request).ConfigureAwait(false);
+            response.EnsureSuccessStatusCode();
 
-                var content = await response.Content.ReadAsStringAsync();
-                return Newtonsoft.Json.JsonConvert.DeserializeObject<TokenResponse>(content);
-            }
+            var content = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+            return Newtonsoft.Json.JsonConvert.DeserializeObject<TokenResponse>(content);
         }
 
         private class TokenResponse

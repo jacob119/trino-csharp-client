@@ -5,6 +5,7 @@ using Trino.Client.Utils;
 
 using System;
 using System.Collections;
+using System.Collections.Generic;
 using System.Data;
 using System.Data.Common;
 using System.Threading;
@@ -23,6 +24,7 @@ namespace Trino.Data.ADO.Client
         public override bool IsClosed { get { return isClosed; } }
         private bool isClosed = false;
         private readonly Records records;
+        private Dictionary<string, int> _ordinalCache;
 
         public override int RecordsAffected
         {
@@ -236,13 +238,18 @@ namespace Trino.Data.ADO.Client
 
         public override int GetOrdinal(string name)
         {
-            for (int i = 0; i < records.Columns.Count; i++)
+            if (_ordinalCache == null)
             {
-                if (records.Columns[i].name.Equals(name, StringComparison.OrdinalIgnoreCase))
+                _ordinalCache = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                for (int i = 0; i < records.Columns.Count; i++)
                 {
-                    return i;
+                    _ordinalCache[records.Columns[i].name] = i;
                 }
             }
+
+            if (_ordinalCache.TryGetValue(name, out int ordinal))
+                return ordinal;
+
             throw new IndexOutOfRangeException($"Column name \"{name}\" not found.");
         }
 
@@ -331,9 +338,9 @@ namespace Trino.Data.ADO.Client
         /// <summary>
         /// The default position of a data reader is before the first record. Therefore, you must call Read to begin accessing data.
         /// </summary>
-        public override async Task<bool> ReadAsync(CancellationToken token)
+        public override async Task<bool> ReadAsync(CancellationToken cancellationToken)
         {
-            // ignore cancellation token because the command already has a cancellation token
+            cancellationToken.ThrowIfCancellationRequested();
             return await records.MoveNextAsync().ConfigureAwait(false);
         }
     }

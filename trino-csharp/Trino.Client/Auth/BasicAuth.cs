@@ -38,9 +38,9 @@ namespace Trino.Client.Auth
         /// <param name="httpRequestMessage">Http request message</param>
         public virtual void AddCredentialToRequest(HttpRequestMessage httpRequestMessage)
         {
-           var credentials = Convert.ToBase64String(string.IsNullOrEmpty(Password) ? 
-                          Encoding.ASCII.GetBytes($"{User}") : 
-                          Encoding.ASCII.GetBytes($"{User}:{Password}"));
+           var credentials = Convert.ToBase64String(string.IsNullOrEmpty(Password) ?
+                          Encoding.UTF8.GetBytes(User) :
+                          Encoding.UTF8.GetBytes($"{User}:{Password}"));
 
             httpRequestMessage.Headers.Add("Authorization", "Basic " + credentials);
         }

@@ -30,8 +30,8 @@ namespace Trino.Client
         /// </summary>
         internal bool StateTransition(TrinoQueryStates transitionTo, TrinoQueryStates transitionFrom)
         {
-            Interlocked.CompareExchange(ref this.state, (int)transitionTo, (int)transitionFrom);
-            return (TrinoQueryStates)state == transitionTo;
+            int previous = Interlocked.CompareExchange(ref this.state, (int)transitionTo, (int)transitionFrom);
+            return previous == (int)transitionFrom;
         }
 
         /// <summary>
