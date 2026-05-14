@@ -154,7 +154,8 @@ namespace Trino.Client.Utils
                     int separator = value.ToString().IndexOf('-');
                     int years = Convert.ToInt32(value.ToString().Substring(0, separator));
                     int months = Convert.ToInt32(value.ToString().Substring(separator + 1));
-                    return new DateTime(years, months, 1);
+                    // DateTime year/month must be >= 1; clamp so "N-0" or "0-M" don't throw.
+                    return new DateTime(Math.Max(1, years), Math.Max(1, months), 1);
                 case TRINO_INTERVAL_DAY_TO_SECOND:
                     int dayToTimeSeparator = value.ToString().IndexOf(' ');
                     int days = Convert.ToInt32(value.ToString().Substring(0, dayToTimeSeparator));
