@@ -18,6 +18,9 @@ namespace Trino.Client
         /// </summary>
         public Records Records { get; }
 
+        // Forward-only stream: only one enumerator is valid.
+        private int _enumeratorRequested;
+
         /// <summary>
         /// Creates a new RecordExecutor with the specified record enumerator.
         /// </summary>
@@ -108,9 +111,12 @@ namespace Trino.Client
 
         /// <summary>
         /// Returns an enumerator that iterates through the query results.
+        /// This is a forward-only stream; calling GetEnumerator() more than once throws.
         /// </summary>
         public IEnumerator<List<object>> GetEnumerator()
         {
+            if (Interlocked.Increment(ref _enumeratorRequested) > 1)
+                throw new InvalidOperationException("RecordExecutor represents a forward-only stream and can only be enumerated once.");
             return Records;
         }
 
