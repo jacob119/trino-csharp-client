@@ -156,11 +156,19 @@ namespace Trino.Client
 
             this.httpClient = new HttpClient(handler);
             _ownsHttpClient = true;
-            this.httpClient.Timeout = Constants.HttpConnectionTimeout;
-
-            if (!this.Session.Properties.CompressionDisabled)
+            try
             {
-                this.httpClient.DefaultRequestHeaders.AcceptEncoding.Add(new StringWithQualityHeaderValue("gzip"));
+                this.httpClient.Timeout = Constants.HttpConnectionTimeout;
+
+                if (!this.Session.Properties.CompressionDisabled)
+                {
+                    this.httpClient.DefaultRequestHeaders.AcceptEncoding.Add(new StringWithQualityHeaderValue("gzip"));
+                }
+            }
+            catch
+            {
+                this.httpClient.Dispose();
+                throw;
             }
         }
 

@@ -107,6 +107,15 @@ namespace Trino.Data.ADO.Client
             }
         }
 
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                Close();
+            }
+            base.Dispose(disposing);
+        }
+
         public override bool GetBoolean(int i)
         {
             return records.GetValue<bool>(i, "boolean", false);

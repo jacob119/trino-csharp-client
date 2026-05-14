@@ -147,7 +147,19 @@ namespace Trino.Client
         /// </summary>
         public void Dispose()
         {
-            pageQueue.Cancel().ConfigureAwait(false).GetAwaiter().GetResult();
+            try
+            {
+                pageQueue.Cancel().ConfigureAwait(false).GetAwaiter().GetResult();
+            }
+            catch (Exception ex)
+            {
+                logger?.LogWarning("Trino: Exception during query disposal: {0}", ex.Message);
+            }
+            finally
+            {
+                allowOneThreadToReadPages.Dispose();
+                pageQueue.Dispose();
+            }
         }
 
         internal async Task<bool> HasData()

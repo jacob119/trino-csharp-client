@@ -12,7 +12,7 @@ namespace Trino.Client
     /// <summary>
     /// Queue to hold the pages of data returned from Trino.
     /// </summary>
-    internal class PageQueue
+    internal class PageQueue : IDisposable
     {
         private readonly StatementClientV1 client;
         // BlockingCollection offers no advantage over ConcurrentQueue for this use case.
@@ -261,9 +261,23 @@ namespace Trino.Client
 
         internal async Task<bool> Cancel()
         {
-            bool result = await this.client.Cancel().ConfigureAwait(false);
-            (this.client as IDisposable)?.Dispose();
+            bool result = false;
+            try
+            {
+                result = await this.client.Cancel().ConfigureAwait(false);
+            }
+            finally
+            {
+                (this.client as IDisposable)?.Dispose();
+            }
             return result;
+        }
+
+        public void Dispose()
+        {
+            signalUpdatedQueue.Dispose();
+            signalFoundResult.Dispose();
+            signalColumnsRead.Dispose();
         }
 
         /// <summary>
