@@ -21,6 +21,7 @@ namespace Trino.Client
 
         // The actual buffer size
         private readonly long bufferSize;
+        private long currentQueueBytes;
         private readonly CancellationToken cancellationToken;
         private readonly ILoggerWrapper logger;
         private readonly IList<Action<TrinoStats, TrinoError>> queryStatusNotifications;
@@ -36,7 +37,7 @@ namespace Trino.Client
         private int waitForQueueTimeoutMsec = 50;
         private Task readAhead;
 
-        internal PageQueue(ILoggerWrapper logger, IList<Action<TrinoStats, TrinoError>> queryStatusNotifications, StatementClientV1 client, long bufferSize, bool isQuery)
+        internal PageQueue(ILoggerWrapper logger, IList<Action<TrinoStats, TrinoError>> queryStatusNotifications, StatementClientV1 client, long bufferSize, bool isQuery, CancellationToken cancellationToken = default)
         {
             if (bufferSize == 0)
             {
@@ -47,6 +48,7 @@ namespace Trino.Client
             this.queryStatusNotifications = queryStatusNotifications;
             this.client = client;
             this.bufferSize = bufferSize;
+            this.cancellationToken = cancellationToken;
             IsQuery = isQuery;
         }
 
@@ -127,6 +129,7 @@ namespace Trino.Client
                     if (this.IsQuery && statementResponse.Response.HasData)
                     {
                         this.responseQueue.Enqueue(statementResponse);
+                        Interlocked.Add(ref currentQueueBytes, statementResponse.SizeBytes);
                         HasResults = true;
                         this.LastStatement = statementResponse.Response;
                         signalUpdatedQueue.Release();
@@ -194,12 +197,7 @@ namespace Trino.Client
                 {
                     // if this is a query, but not finished, only read ahead the size of the buffer.
                     // Note, buffer is a soft approximate limit based on the string size of the pages.
-                    long queueSize = 0;
-                    foreach (ResponseQueueStatement page in responseQueue)
-                    {
-                        queueSize += page.SizeBytes;
-                    }
-                    return queueSize < bufferSize;
+                    return Interlocked.Read(ref currentQueueBytes) < bufferSize;
                 }
                 else
                 {
@@ -254,12 +252,18 @@ namespace Trino.Client
                     waitForQueueTimeoutMsec = Math.Min(waitForQueueTimeoutMsec + queueCheckBackoff, maxWaitForQueueTimeoutMsec);
                 }
             }
+            else
+            {
+                Interlocked.Add(ref currentQueueBytes, -response.SizeBytes);
+            }
             return response;
         }
 
         internal async Task<bool> Cancel()
         {
-            return await this.client.Cancel().ConfigureAwait(false);
+            bool result = await this.client.Cancel().ConfigureAwait(false);
+            (this.client as IDisposable)?.Dispose();
+            return result;
         }
 
         /// <summary>

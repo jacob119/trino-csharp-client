@@ -147,7 +147,7 @@ namespace Trino.Client
         /// </summary>
         public void Dispose()
         {
-            pageQueue.Cancel().Wait();
+            pageQueue.Cancel().ConfigureAwait(false).GetAwaiter().GetResult();
         }
 
         internal async Task<bool> HasData()

@@ -31,7 +31,7 @@ namespace Trino.Client
         protected internal ClientSession Session { get; set; }
         protected internal ILoggerWrapper logger;
         protected internal CancellationToken cancellationToken;
-        protected internal ProtocolHeaders protocolHeaders;
+        internal ProtocolHeaders protocolHeaders;
 
         // HTTP status codes that allow for a retry
         protected internal HashSet<HttpStatusCode> RetryableResponses = new HashSet<HttpStatusCode>() { HttpStatusCode.BadGateway, HttpStatusCode.ServiceUnavailable, HttpStatusCode.GatewayTimeout };
@@ -193,7 +193,7 @@ namespace Trino.Client
         /// <summary>
         /// Adds headers that are common to all requests
         /// </summary>
-        protected static internal void AddHeaders(ProtocolHeaders protocolHeaders, HttpRequestMessage request, ClientSession session)
+        internal static void AddHeaders(ProtocolHeaders protocolHeaders, HttpRequestMessage request, ClientSession session)
         {
             session.Auth?.AddCredentialToRequest(request);
 

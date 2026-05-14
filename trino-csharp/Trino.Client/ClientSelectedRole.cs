@@ -35,7 +35,7 @@ namespace Trino.Client
             }
             ClientSelectedRole that = (ClientSelectedRole)o;
             return RoleType == that.RoleType &&
-                    Role == this.Role;
+                    Role == that.Role;
         }
 
         public override int GetHashCode()

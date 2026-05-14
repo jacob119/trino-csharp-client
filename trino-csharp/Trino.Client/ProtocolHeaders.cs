@@ -3,7 +3,7 @@ namespace Trino.Client
     /// <summary>
     /// Define the protocol header names for a Trino connection.
     /// </summary>
-    public class ProtocolHeaders
+    internal sealed class ProtocolHeaders
     {
         internal string Name { get; private set; }
         internal string RequestUser { get; private set; }

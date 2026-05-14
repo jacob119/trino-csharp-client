@@ -76,7 +76,10 @@ namespace Trino.Data.ADO.Server
             CancellationTokenSource cancellationToken,
             ILoggerWrapper logger)
         {
-            connection.ConnectionSession.Properties.Timeout = timeout;
+            if (timeout != TimeSpan.MaxValue)
+            {
+                connection.ConnectionSession.Properties.Timeout = timeout;
+            }
             Connection = connection;
             CommandText = statement;
             CancellationToken = cancellationToken ?? new CancellationTokenSource();
@@ -163,14 +166,20 @@ namespace Trino.Data.ADO.Server
         public override object ExecuteScalar()
         {
             var records = RunQuery().SafeResult().Records;
-
-            if (!records.MoveNext())
+            try
             {
-                return null;
-            }
+                if (!records.MoveNext())
+                {
+                    return null;
+                }
 
-            CancellationToken.Cancel();
-            return records.Columns.Count > 0 ? records.GetValue<object>(0) : null;
+                CancellationToken.Cancel();
+                return records.Columns.Count > 0 ? records.GetValue<object>(0) : null;
+            }
+            finally
+            {
+                records.Dispose();
+            }
         }
 
         /// <summary>

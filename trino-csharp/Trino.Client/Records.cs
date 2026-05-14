@@ -6,6 +6,7 @@ using Trino.Client.Utils;
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace Trino.Client
@@ -36,6 +37,7 @@ namespace Trino.Client
         private readonly bool forceLimitOne = false;
         private readonly ILoggerWrapper logger;
         private bool isClosed;
+        private int _disposeFlag;
         private IList<TrinoColumn> columns;
 
         internal Records(ILoggerWrapper logger, Pages pages)
@@ -73,7 +75,7 @@ namespace Trino.Client
 
         public void Dispose()
         {
-            if (!isClosed)
+            if (Interlocked.Exchange(ref _disposeFlag, 1) == 0)
             {
                 isClosed = true;
                 pages.Dispose();
@@ -168,7 +170,7 @@ namespace Trino.Client
 
         public TrinoColumn GetColumn(int i)
         {
-            if (i < 0 || i > Columns.Count)
+            if (i < 0 || i >= Columns.Count)
             {
                 throw new ArgumentException("Requested column index out of range.");
             }

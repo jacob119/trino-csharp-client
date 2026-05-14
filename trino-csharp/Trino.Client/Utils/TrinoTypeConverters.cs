@@ -120,7 +120,7 @@ namespace Trino.Client.Utils
 
         private static object ConvertToTrinoTypeFromJson(object value, string trinoType, string baseType, string typeParameters)
         {
-            switch (baseType.ToLower())
+            switch (baseType.ToLowerInvariant())
             {
                 case TRINO_BIGINT:
                     return value;
@@ -260,7 +260,7 @@ namespace Trino.Client.Utils
         {
             GetNestedTypes(trinoType.type, out string baseType, out string typeParameters);
 
-            switch (baseType.ToLower())
+            switch (baseType.ToLowerInvariant())
             {
                 case TRINO_BIGINT:
                     return typeof(long);
@@ -424,7 +424,7 @@ namespace Trino.Client.Utils
             }
             else
             {
-                throw new Exception("Unknown complex type");
+                throw new TrinoException("Unknown complex type: " + baseType);
             }
         }
     }
