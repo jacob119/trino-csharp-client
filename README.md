@@ -42,7 +42,7 @@ trino-csharp/
 | `Trino.Client` | Core Trino SDK | netstandard2.0 / net48 | Protocol, session management, query execution, result streaming |
 | `Trino.Data.ADO` | ADO.NET wrapper | netstandard2.0 / net48 | `DbConnection`, `DbCommand`, `IDataReader`, schema discovery |
 | `Trino.Client.Auth` | Authentication providers | netstandard2.0 / net48 | Separate package to avoid dependency conflicts |
-| `Trino.Integration.Test` | Integration test runner | .NET 10 | 11 live tests against Trino cluster |
+| `Trino.Integration.Test` | Integration test runner | .NET 10 | 16 live tests against Trino cluster |
 | `Trino.Platform.Samples` | Sample programs | .NET 10 | 10 example patterns with `appsettings.json` config |
 | `Trino.Platform.Samples.Tests` | Sample integration tests | .NET 10 | xUnit tests for HTTP client samples |
 
@@ -501,13 +501,13 @@ All headers from `ProtocolHeaders.java` (Trino master) are implemented.
 | `time with time zone` | `string` |
 | `timestamp` | `DateTime` |
 | `timestamp with time zone` | `DateTimeOffset` |
-| `interval year to month` | `DateTime` |
+| `interval year to month` | `TrinoIntervalYearToMonth` |
 | `interval day to second` | `TimeSpan` |
 | `uuid` | `string` |
 | `ipaddress` | `string` |
 | `array(T)` | `List<object>` |
 | `map(K,V)` | `Dictionary<object,object>` |
-| `row(...)` | `Dictionary<string,object>` |
+| `row(...)` | `List<object>` |
 | `json` | `string` |
 | `HyperLogLog`, `P4HyperLogLog` | `byte[]` |
 
@@ -544,6 +544,11 @@ dotnet run --project trino-csharp/Trino.Integration.Test/Trino.Integration.Test.
 | 9 | Parameter binding | Positional `?` parameter |
 | 10 | Timeout | Client-side timeout, no hang |
 | 11 | Impersonation | `X-Trino-Authorization-User` |
+| 12 | Numeric types | bigint, integer, smallint, tinyint, double, real, decimal, boolean |
+| 13 | Date/time types | date, time, timestamp, timestamp with time zone, interval year to month, interval day to second |
+| 14 | String/binary types | varchar, char, varbinary, uuid, ipaddress, json |
+| 15 | Complex types | array, map, row |
+| 16 | NULL handling | All null-typed columns return DBNull |
 
 ### Sample Programs
 
@@ -562,18 +567,48 @@ dotnet run -- --test
 ## Quick-Start with Docker
 
 ```bash
-# Start Trino
-docker run -d --name trino -p 8080:8080 trinodb/trino:latest
+# Start Trino (exposes port 8081 to match integration test defaults)
+docker run -d --name trino -p 8081:8080 trinodb/trino:latest
 
-# Wait for startup (~30 s), then run integration tests
+# Wait ~10 s for startup
+curl http://localhost:8081/v1/info
+
+# Run integration tests (16 tests)
 dotnet run --project trino-csharp/Trino.Integration.Test/Trino.Integration.Test.csproj
 ```
 
-Point the integration test at the Docker instance by editing the `Host`/`Port` constants in `Trino.Integration.Test/Program.cs`.
+Point the integration test at a different cluster by editing the `Host`, `Port`, and `Ssl` constants in `Trino.Integration.Test/Program.cs`.
 
 ---
 
 ## Changelog
+
+### 2026-05 — Code Tuning: Async Auth, HttpClient Reuse, Type Fixes, Protocol Hardening
+
+- **Added** `ITrinoAuthAsync` — async extension of `ITrinoAuth`; eliminates `GetAwaiter().GetResult()` deadlocks in auth providers. `BasicAuth`, `TrinoJWTAuth`, `TrinoOauthClientSecretAuth`, and `TrinoAzureDefaultAuth` all implement it; call sites prefer async path via `is ITrinoAuthAsync` check.
+- **Fixed** `StatementClientV1` socket exhaustion — sessions without custom TLS now reuse two shared static `HttpClient` instances (with/without GZip compression) instead of creating a new instance per query.
+- **Fixed** `interval year to month` type now maps to `TrinoIntervalYearToMonth` instead of `DateTime`. Access `Year` and `Month` properties directly.
+- **Fixed** `StatementClientV1.Advance()` no longer mutates `Statement.nextUri` — URL is built in a local `requestUri` variable.
+- **Fixed** `TrinoCommand.CommandTimeout` is now per-command (stored in `_commandTimeout`); does not mutate the shared `TrinoConnection.ConnectionSession`. `GetSessionForExecution()` creates a shallow-copied session when a per-command timeout is set.
+- **Fixed** `LoggingExtensions` removed dependency on internal `Microsoft.Extensions.Logging.Internal.FormattedLogValues` type; replaced with `string.Format`.
+- **Fixed** `PageQueue._hasErrors` is now a `volatile bool` — O(1) fast path for `ThrowIfErrors()` and `ShouldStopReading()` instead of `ConcurrentBag.Any()` LINQ scan.
+- **Fixed** `QueryState` state properties use `Volatile.Read` for ARM64-safe cross-thread visibility.
+- **Fixed** `Records.Columns` uses `Volatile.Read/Write` for safe publication from background read-ahead task.
+- **Fixed** `BigDecimal.Equals()` operates on local copies before `AlignScales` to prevent mutation of `this`.
+- **Fixed** `SchemaUtils.ValidateIdentifier` prevents SQL injection in catalog/schema names passed to `information_schema` queries.
+- **Fixed** `SchemaUtils.GetAllInformationSchemaWithTimeout` uses `Task.WhenAll` instead of `Parallel.ForEach` for true async I/O without blocking thread pool threads.
+- **Fixed** `BasicAuth` caches computed `Authorization` header after first use.
+- **Fixed** `Pages.MoveNextAsync` and `Records.MoveNextAsync` accept a `CancellationToken`; token is threaded from `TrinoDataReader.ReadAsync` all the way into `PageQueue.DequeueOrNull`.
+- **Fixed** `Pages.Dispose()` fire-and-forgets the server-side DELETE (Dispose must not block on network I/O).
+- **Fixed** `TrinoConnection.ServerVersion` uses `Lazy<string>` for thread-safe lazy initialization.
+- **Fixed** `ConnectionStringUtils.TrySetSessionProperty` uses `TryGetValue` (single dictionary lookup instead of double lookup).
+- **Fixed** `TrinoTypeConverters.GetNestedTypes` normalizes `baseType` once with `ToLowerInvariant()` to eliminate repeated allocations per cell.
+- **Fixed** map type parameter splitting uses `SplitTopLevelComma` depth-counter parser — correctly handles nested types like `map(row(a integer, b varchar), array(bigint))`.
+- **Fixed** `TrinoDataReader.GetBytes` / `GetChars` use `Array.Copy` / `CopyTo` with proper bounds checking.
+- **Removed** dead code: `PageExecutor.cs` and duplicate `Trino.Data.ADO/Utilities/TaskUtilities.cs`.
+- **Added** `ClientSessionProperties.ShallowCopy()` via `MemberwiseClone` for per-command timeout overrides.
+- **Added** `InternalsVisibleTo("Trino.Data.ADO")` in `Trino.Client.csproj` for shared utility access.
+- **Added** developer documentation in `docs/` — architecture, development guide, extension recipes, troubleshooting.
 
 ### 2026-05 — Concurrency Safety, Performance, and Multi-targeting
 
